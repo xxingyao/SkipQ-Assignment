@@ -1,0 +1,8 @@
+node_modules/
+__pycache__/
+venv/
+.aws/
+*.pem
+q7-screencast/
+q6-performance/
+*.mp4
