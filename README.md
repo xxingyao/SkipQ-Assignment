@@ -60,7 +60,7 @@ The three codebases were relocated into a single repository:
 
 ### 2. Pull request
 
-**PR URL:** `TODO — paste the merged PR URL here`
+**PR URL:** `https://github.com/ICT381/ict381-2026-t02-eca-xxingyao/pull/2`
 
 The PR diff is the before/after for items 3 and 4 below.
 
