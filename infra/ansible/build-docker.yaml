@@ -92,7 +92,7 @@
       name: ict381_frontend
       build:
         path: "{{jenkins_path}}/{{pipeline_name}}/frontend/"
-        dockerfile: DockerfilemyReactApp
+        dockerfile: Dockerfilefrontend
       source: build
 
   - name: Tag and Push to repo for frontend
