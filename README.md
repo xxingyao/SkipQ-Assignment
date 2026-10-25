@@ -71,19 +71,19 @@ Three separate checkouts collapsed into a single monorepo checkout, and stage co
 | Stage | Before | After |
 |---|---|---|
 | Checkout | 3 × `git` clone (automation, StaycationX, myReactApp) | `checkout scm` |
-| Docker | `ansible-playbook ansible/build-docker.yaml` | `TODO` |
-| Terraform | `terraform -chdir=terraform ...` | `TODO` |
-| Ansible | `ansible-playbook ... ansible/prod-application.yaml` | `TODO` |
+| Docker | `ansible-playbook ansible/build-docker.yaml` | `ansible-playbook infra/ansible/build-docker.yaml` |
+| Terraform | `terraform -chdir=terraform ...` | `terraform -chdir=infra/terraform ...` |
+| Ansible | `ansible-playbook ... ansible/prod-application.yaml` | `ansible-playbook ... infra/ansible/prod-application.yaml` |
 
 ### 4. Ansible playbook before/after
 
 | File | Line | Before | After |
 |---|---|---|---|
-| `infra/ansible/build-docker.yaml` | `TODO` | `project_src: /opt/StaycationX` | `TODO` |
-| `infra/ansible/build-docker.yaml` | `TODO` | build context `.../StaycationX/` | `TODO` |
-| `infra/ansible/build-docker.yaml` | `TODO` | build context `.../StaycationX/` | `TODO` |
-| `infra/ansible/build-docker.yaml` | `TODO` | build context `.../myReactApp/` | `TODO` |
-| `infra/ansible/prod-application.yaml` | `TODO` | `src: .../StaycationX/dockerhub.yml` | `TODO` |
+| `infra/ansible/build-docker.yaml` | 35 | `project_src: /opt/StaycationX` | `project_src: /opt/backend` |
+| `infra/ansible/build-docker.yaml` | 65 | build context `.../StaycationX/` | build context `.../backend/` (backend image) |
+| `infra/ansible/build-docker.yaml` | 79 | build context `.../StaycationX/` | build context `.../backend/` (MongoDB image) |
+| `infra/ansible/build-docker.yaml` | 94 | build context `.../myReactApp/` | build context `.../frontend/` |
+| `infra/ansible/prod-application.yaml` | 39 | `src: .../StaycationX/dockerhub.yml` | `src: .../backend/dockerhub.yml` |
 
 ---
 
