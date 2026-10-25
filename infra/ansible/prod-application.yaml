@@ -36,7 +36,7 @@
 
   - name: Copy dockerhub.yml from delivery machine to deployment machine
     copy:
-      src: "{{jenkins_path}}/{{pipeline_name}}/StaycationX/dockerhub.yml"
+      src: "{{jenkins_path}}/{{pipeline_name}}/backend/dockerhub.yml"
       dest: /root/dockerhub.yml
       owner: root
       group: root
