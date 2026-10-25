@@ -12,19 +12,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                script {
-                    if (params.Action == 'apply') {
-                        git branch: 'main', credentialsId: 'my-keys', url: 'git@github.com:GIT_USERNAME/automation.git'
-
-                        dir('StaycationX') {
-                            git branch: 'main', credentialsId: 'my-keys', url: 'git@github.com:GIT_USERNAME/StaycationX.git'
-                        }
-
-                        dir('myReactApp') {
-                            git branch: 'main', credentialsId: 'my-keys', url: 'git@github.com:GIT_USERNAME/myReactApp.git'
-                        }
-                    }
-                }
+                checkout scm
             }
         }
 
@@ -39,7 +27,7 @@ pipeline {
                  {
                     script {
                         if (params.Action == 'apply') {
-                            sh 'ansible-playbook ansible/build-docker.yaml'
+                            sh 'ansible-playbook infra/ansible/build-docker.yaml'
                         }
                     }
                 }
@@ -50,11 +38,11 @@ pipeline {
             steps {
                 script {
                     if (params.Action == 'apply') {
-                        sh 'terraform -chdir=terraform init'
-                        sh 'terraform -chdir=terraform apply -var="name=prod-ict381" -var="group=web" --auto-approve'
+                        sh 'terraform -chdir=infra/terraform init'
+                        sh 'terraform -chdir=infra/terraform apply -var="name=prod-ict381" -var="group=web" --auto-approve'
                     }
                     else {
-                        sh 'terraform -chdir=terraform destroy -var="name=prod-ict381" -var="group=web" --auto-approve'
+                        sh 'terraform -chdir=infra/terraform destroy -var="name=prod-ict381" -var="group=web" --auto-approve'
                     }
                 }
             }
@@ -64,7 +52,7 @@ pipeline {
             steps {
                 script {
                     if (params.Action == 'apply') {
-                        sh 'ansible-playbook -i /etc/ansible/aws_ec2.yaml ansible/prod-application.yaml'
+                        sh 'ansible-playbook -i /etc/ansible/aws_ec2.yaml infra/ansible/prod-application.yaml'
                     }
                 }
             }

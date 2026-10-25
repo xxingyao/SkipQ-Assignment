@@ -32,7 +32,7 @@
 
   - name: Stop running containers
     community.docker.docker_compose_v2:
-      project_src: /opt/StaycationX
+      project_src: /opt/backend
       state: absent
 
   - name: Get all Docker images
@@ -58,17 +58,17 @@
     loop: "{{ images_to_remove }}"
     when: item is defined
 
-  - name: Build StaycationX Image
+  - name: Build backend Image
     community.docker.docker_image:
-      name: ict381_staycation
+      name: ict381_backend
       build:
-        path: "{{jenkins_path}}/{{pipeline_name}}/StaycationX/"
+        path: "{{jenkins_path}}/{{pipeline_name}}/backend/"
       source: build
 
-  - name: Tag and Push to repo for StaycationX
+  - name: Tag and Push to repo for backend
     community.docker.docker_image:
-      name: ict381_staycation
-      repository: "{{DOCKER_USER}}/ict381_staycation"
+      name: ict381_backend
+      repository: "{{DOCKER_USER}}/ict381_backend"
       push: true
       source: local
 
@@ -76,7 +76,7 @@
     community.docker.docker_image:
       name: ict381_mongo
       build:
-        path: "{{jenkins_path}}/{{pipeline_name}}/StaycationX/"
+        path: "{{jenkins_path}}/{{pipeline_name}}/backend/"
         dockerfile: DockerfileMongo
       source: build
 
@@ -87,18 +87,18 @@
       push: true
       source: local
 
-  - name: Build myReactApp Image
+  - name: Build frontend Image
     community.docker.docker_image:
-      name: ict381_myreactapp
+      name: ict381_frontend
       build:
-        path: "{{jenkins_path}}/{{pipeline_name}}/myReactApp/"
+        path: "{{jenkins_path}}/{{pipeline_name}}/frontend/"
         dockerfile: DockerfilemyReactApp
       source: build
 
-  - name: Tag and Push to repo for myReactApp
+  - name: Tag and Push to repo for frontend
     community.docker.docker_image:
-      name: ict381_myreactapp
-      repository: "{{DOCKER_USER}}/ict381_myreactapp"
+      name: ict381_frontend
+      repository: "{{DOCKER_USER}}/ict381_frontend"
       push: true
       source: local
 
