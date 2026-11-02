@@ -1,0 +1,30 @@
+
+PLAY [Build and push the backend and MongoDB images to ECR] ********************
+
+TASK [Fail early if the ECR repository URLs are not filled in] *****************
+skipping: [localhost]
+
+TASK [Derive the ECR registry host from the repository URL] ********************
+ok: [localhost]
+
+TASK [Authenticate Docker to ECR through the instance profile] *****************
+ok: [localhost]
+
+TASK [Build the backend image] *************************************************
+changed: [localhost]
+
+TASK [Push the backend image to ECR] *******************************************
+changed: [localhost]
+
+TASK [Build the MongoDB image (seed data baked in from db_seed/)] **************
+changed: [localhost]
+
+TASK [Push the MongoDB image to ECR] *******************************************
+changed: [localhost]
+
+TASK [Prune dangling build layers to conserve disk on the CI host] *************
+ok: [localhost]
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=7    changed=4    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   
+

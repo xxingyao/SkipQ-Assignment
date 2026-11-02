@@ -1,0 +1,61 @@
+
+PLAY [Install Docker + AWS CLI and log in to ECR on the application and database hosts] ***
+
+TASK [Ensure the apt keyrings directory exists] ********************************
+ok: [application]
+ok: [database]
+
+TASK [Add Docker GPG key] ******************************************************
+changed: [application]
+changed: [database]
+
+TASK [Add Docker repo] *********************************************************
+changed: [application]
+changed: [database]
+
+TASK [Install Docker engine, the compose plugin, and unzip (for the AWS CLI)] ***
+changed: [application]
+changed: [database]
+
+TASK [Download the AWS CLI v2 installer] ***************************************
+changed: [application]
+changed: [database]
+
+TASK [Unpack the AWS CLI v2 installer] *****************************************
+changed: [application]
+changed: [database]
+
+TASK [Install the AWS CLI v2] **************************************************
+changed: [application]
+changed: [database]
+
+TASK [Authenticate Docker to the private ECR through the instance profile] *****
+ok: [application]
+ok: [database]
+
+PLAY [Deploy MongoDB to the database host] *************************************
+
+TASK [Create the MongoDB compose project directory] ****************************
+changed: [database]
+
+TASK [Render the MongoDB compose file] *****************************************
+changed: [database]
+
+TASK [Bring MongoDB up] ********************************************************
+changed: [database]
+
+PLAY [Deploy the backend to the application host] ******************************
+
+TASK [Create the backend compose project directory] ****************************
+changed: [application]
+
+TASK [Render the backend compose file] *****************************************
+changed: [application]
+
+TASK [Bring the backend up] ****************************************************
+changed: [application]
+
+PLAY RECAP *********************************************************************
+application                : ok=11   changed=9    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+database                   : ok=11   changed=9    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

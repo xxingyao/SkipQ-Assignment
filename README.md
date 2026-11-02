@@ -285,51 +285,72 @@ The Jenkins check uses `curl -sI http://localhost:8080 | grep -iE "^HTTP|^X-Jenk
 
 | File | What was filled in |
 |---|---|
-| `infra/ansible/build-docker.yaml` | Build-and-push tasks in the `YOUR SCRIPT` block |
-| `infra/ansible/inventory.ini` | Application and database private addresses; backend and MongoDB ECR repo URLs |
-| `infra/ansible/prod-application.yaml` | Host targeting (MongoDB → database host, backend → application host) and the parameterised `image_tag` |
+| [`infra/ansible/build-docker.yaml`](infra/ansible/build-docker.yaml) | Build-and-push tasks in the `YOUR SCRIPT` block: build and push the backend image, then build the MongoDB image from `backend/DockerfileMongo` and push it, each tagged `{{ image_tag }}` (default `latest`) |
+| [`infra/ansible/inventory.ini`](infra/ansible/inventory.ini) | `[app]` → `ip-172-31-42-96.ec2.internal`, `[db]` → `172.31.40.21`, and the backend and MongoDB ECR repository URLs, all from the Q2 `terraform output` |
+| [`infra/ansible/prod-application.yaml`](infra/ansible/prod-application.yaml) | MongoDB play → `hosts: db`, backend play → `hosts: app`, and `image_tag: latest` as the default |
+
+`ansible.cfg` and the two compose templates under `templates/` are unchanged from the provided files.
+
+**Backend files the build needs.** This repo uses my SkipQ TMA backend, which had no Dockerfiles, so `build-docker.yaml` had nothing to build from `backend/`. I added:
+
+| File | Why |
+|---|---|
+| [`backend/Dockerfile`](backend/Dockerfile) (new) | Builds the API image (`python:3.12-slim`, `gunicorn` on port 5000) and sets `MONGODB_HOST=db` so the backend uses the `db` name mapped by `extra_hosts` |
+| [`backend/DockerfileMongo`](backend/DockerfileMongo), [`backend/db_seed_restore.sh`](backend/db_seed_restore.sh) | The provided files, unchanged |
+| [`backend/db_seed/skipq/`](backend/db_seed/skipq) | A `mongodump` of the database produced by my existing `db_seed/seed.py`, in the dump format `mongorestore --drop /opt` expects |
 
 ### (b) Run logs
 
 | Log | What it proves |
 |---|---|
-| [`evidence/q3b-build-push.log`](evidence/q3b-build-push.log) | Images built and pushed to private ECR |
-| [`evidence/q3b-ecr-images.log`](evidence/q3b-ecr-images.log) | Both images landed in ECR |
-| [`evidence/q3b-deploy.log`](evidence/q3b-deploy.log) | Split deploy ran across both hosts |
+| [`evidence/q3b-build-push.log`](evidence/q3b-build-push.log) | Both images built and pushed to private ECR (`changed=4 failed=0`) |
+| [`evidence/q3b-ecr-images.log`](evidence/q3b-ecr-images.log) | `aws ecr list-images` lists the pushed image in both `ict381_backend` and `ict381_mongo` |
+| [`evidence/q3b-deploy.log`](evidence/q3b-deploy.log) | The split deploy ran across both hosts (`application` and `database`: `changed=9 failed=0`) |
 
 ### (b) Service verification
 
 **Log:** [`evidence/q3b-verify.log`](evidence/q3b-verify.log)
 
+The verification commands are the paper's, adapted to my database name (`skipq` instead of `staycation`).
+
 | Check | Expected | Result |
 |---|---|---|
-| `docker ps` on database host | MongoDB container running | `TODO` |
-| `appUsers` count | Greater than 0 — proves first-start seeding | `TODO` |
-| `docker ps` on application host | Backend container running | `TODO` |
-| Backend `extra_hosts` mapping | `db` → database host private address | `TODO` |
-| Backend log | Connected to MongoDB | `TODO` |
-| `curl` application host :5000 | Any HTTP response | `TODO` |
+| `docker ps` on database host | MongoDB container running | `mongo-db-1` running `ict381_mongo:latest`, port 27017 |
+| `appUsers` count | Greater than 0 — proves first-start seeding | `appUsers count: 5` (3 vendors, 2 diners) |
+| `docker ps` on application host | Backend container running | `backend-backend-1` running `ict381_backend:latest`, port 5000 |
+| Backend `extra_hosts` mapping | `db` → database host private address | `[db:172.31.40.21]` |
+| Backend log | Started cleanly | `gunicorn` listening at `http://0.0.0.0:5000`, worker booted, no errors |
+| `curl` application host :5000 | Any HTTP response | `HTTP/1.1 404 NOT FOUND` with the app's own `{"error":"No such endpoint"}` (no route at `/`) |
+| Login `curl` (additional proof) | Backend reads `appUsers` across hosts | `HTTP/1.1 200 OK` with a token for `Tan Wei Ling`, role `Diner` |
+
+The extra login check is there because my backend connects to MongoDB on the first request, not at start-up, so its log alone cannot show the connection.
 
 ### (b) Question 1 — Why does the backend container need the `db` `extra_hosts` mapping?
 
 > Why does the backend need this in the split deployment, when the original co-located `dockerhub.yml` did not?
 
-`TODO — cover: what hostname app/__init__.py uses for Mongo and whether it can be changed outside FLASK_ENV=development; how the old single-host Compose project resolved the name db; what changed once MongoDB moved to a separate EC2 host.`
+**How my backend finds MongoDB.** `app/__init__.py` loads `Config` from `app/config.py`, which reads the host from the `MONGODB_HOST` environment variable (default `127.0.0.1`). It is not tied to `FLASK_ENV=development`: it can be set in any environment. My `backend/Dockerfile` sets `MONGODB_HOST=db`, so the container always looks for a host called `db`.
+
+**How the old single-host setup resolved `db`.** In the co-located `dockerhub.yml`, the backend, MongoDB and Nginx were services in one Docker Compose project on one host. Compose puts them on a shared network with built-in DNS, so the service name `db` resolved to the MongoDB container automatically.
+
+**What changed.** MongoDB now runs in a separate Compose project on a separate EC2 host. The backend's project on the application host has no `db` service, so Docker's DNS cannot resolve the name and the connection would fail. `extra_hosts` in `templates/backend-compose.yml.j2` adds `db → 172.31.40.21` (the database host's private address, from the inventory) to the container's `/etc/hosts`. The verify log confirms it: `[db:172.31.40.21]`. The backend then connects over the private network, which is what `database_sg` allows (27017 from `application_sg` only), with no code change.
 
 ### (b) Question 2 — Why is the AWS CLI installed on the application and database hosts?
 
-`TODO — what the setup play uses it for there, and why it must be on those hosts specifically.`
+The setup play in `prod-application.yaml` installs the AWS CLI so each host can run `aws ecr get-login-password | docker login` against the private ECR registry (the "Authenticate Docker to the private ECR" task). The CLI gets a temporary token from `LabInstanceProfile`, so no password is stored anywhere.
+
+It must be on those two hosts because they are the ones that pull the images: `docker compose` on the database host pulls `ict381_mongo`, and on the application host it pulls `ict381_backend`. A `docker login` is per host. The CI host's login does not carry over, and because the repositories are private, a host that has not logged in cannot pull.
 
 ### (b) Question 3 — What each verification command checks
 
 | Command | What it checks | Why it matters for confirming the split deploy |
 |---|---|---|
-| `docker ps` (database host) | `TODO` | `TODO` |
-| `mongosh` appUsers count | `TODO` | `TODO` |
-| `docker ps` (application host) | `TODO` | `TODO` |
-| `docker inspect` extra_hosts | `TODO` | `TODO` |
-| `docker logs` backend | `TODO` | `TODO` |
-| `curl` :5000 | `TODO` | `TODO` |
+| `docker ps` (database host) | The MongoDB container from `ict381_mongo:latest` is up | Proves the database tier was pulled from ECR and is running on its own host |
+| `mongosh` appUsers count | The `skipq` database has user accounts (5) | Proves the image seeded itself on first start from the baked-in dump, so logins will work |
+| `docker ps` (application host) | The backend container from `ict381_backend:latest` is up on 5000 | Proves the backend tier was pulled from ECR and is running on a separate host from MongoDB |
+| `docker inspect` extra_hosts | `db` maps to `172.31.40.21` | Proves the name the backend uses points at the database host's private address — the link between the two hosts |
+| `docker logs` backend | `gunicorn` started and is listening on `0.0.0.0:5000` without errors | Proves the backend process is healthy, not crash-looping |
+| `curl` :5000 | The API answers from outside the host (404 from the app itself) | Proves port 5000 is open in `application_sg` and the backend is serving, which is how the browser will reach it |
 
 ## Question 3c — Idempotency
 
