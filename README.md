@@ -174,31 +174,52 @@ Covers the CI, application and database instances, the Elastic IPs, the S3 websi
 
 **(6 marks)**
 
-> Analyse the differences between the existing `automation/terraform/` and the target topology. Present each as before → after and explain the value each adds in terms of security, reliability, scalability or maintainability. Explain *why* each change is an improvement, not just what changed.
+Before = `automation/terraform/` as migrated in Q1 (commit `621a3ef`). After = [`infra/terraform/main.tf`](infra/terraform/main.tf).
 
-### Difference 1 — `TODO: title`
-
-| | |
-|---|---|
-| **Before** | `TODO` |
-| **After** | `TODO` |
-| **Value added** | `TODO` |
-| **Why this is an improvement** | `TODO` |
-
-### Difference 2 — `TODO: title`
+### Difference 1 — Two applies and two local states → one config, one remote state
 
 | | |
 |---|---|
-| **Before** | `TODO` |
-| **After** | `TODO` |
-| **Value added** | `TODO` |
-| **Why this is an improvement** | `TODO` |
+| **Before** | The same `main.tf` was applied twice: once from my machine for the CI host (Lab 5A), then again by the Jenkins pipeline for the production host (`Jenkinsfile` line 42, `-var="name=prod-ict381" -var="group=web"`). There was no backend block, so each run kept its own local `terraform.tfstate` (one on my machine, one in the Jenkins workspace). |
+| **After** | One `main.tf` declares every tier (CI, application, database, S3, ECR) and stores one state in S3 with locking (`backend "s3"` line 13, `use_lockfile = true` line 17). A single `terraform apply` built all 14 resources ([`q2b-apply.log`](evidence/q2b-apply.log)). |
+| **Value added** | Reliability, maintainability |
+| **Why this is an improvement** | There is one source of truth. Two state files each saw only half the estate, so one run could not see or safely change the other's resources. The state now survives losing my laptop or the Jenkins workspace, the lock file stops two applies from writing the state at the same time, and one plan shows the effect of a change on the whole topology. |
 
-### Difference 3 — `TODO: title`
+### Difference 2 — Shared wide-open security group → per-tier least-privilege groups
 
-`TODO — repeat the structure above. Candidates: two-apply/two-state → one config with one remote state; shared wide-open SG → per-tier least-privilege SGs; 3-in-1 host → isolated tiers; local state → S3 remote state with locking; Docker Hub → private ECR; co-located frontend → S3 static hosting.`
+| | |
+|---|---|
+| **Before** | One group, `jenkins-sg` (old `main.tf` line 26), opened 5000, 22, 80, 27017, 8080, 9000 and 3000 to `var.source_ip_block`, which defaulted to `0.0.0.0/0` (old `variables.tf` line 3). It was attached to both the CI and production hosts. |
+| **After** | `ci_sg` (line 51): 22 from anywhere, 8080 from GitHub's webhook ranges only. `application_sg` (line 92): 5000 from the internet, 22 from `ci_sg` only. `database_sg` (line 121): 27017 from `application_sg` only, 22 from `ci_sg` only. Ports 80, 3000 and 9000 are no longer open anywhere. |
+| **Value added** | Security |
+| **Why this is an improvement** | MongoDB and Jenkins are no longer reachable from the whole internet, and each host opens only the ports its role needs. Rules that reference another group's ID follow group membership rather than IP addresses, so they keep working when instances are replaced. A compromised host no longer has network access to every port on every other host. |
 
----
+### Difference 3 — 3-in-1 production host → each tier on its own host
+
+| | |
+|---|---|
+| **Before** | One production EC2 ran the backend (5000), MongoDB (27017) and an nginx container serving React (80) together, deployed with `docker compose` and `dockerhub.yml` (`infra/ansible/prod-application.yaml` lines 37–61). |
+| **After** | `aws_instance.app` (line 169) runs only the backend, `aws_instance.db` (line 186) runs only MongoDB, and the frontend is served from S3. The CI host stays separate. |
+| **Value added** | Reliability, scalability, security |
+| **Why this is an improvement** | A problem in one tier (for example MongoDB using all the memory) can no longer take down the others on the same machine. Each tier can be resized or scaled on its own. Splitting the hosts is also what makes Difference 2 possible: the database can only be limited to "the application host" when it is a separate host. |
+
+### Difference 4 — nginx container for the frontend → S3 static website
+
+| | |
+|---|---|
+| **Before** | The built React app was served by an nginx container on the production host, on port 80. |
+| **After** | An S3 bucket (`awscc_s3_bucket.site`, line 221) with website hosting (line 225, `index.html` as both index and error document) and a public-read policy (line 245). Q4 deploys the build with `aws s3 sync`. |
+| **Value added** | Scalability, reliability, maintainability |
+| **Why this is an improvement** | S3 serves static files without a server to patch, size or keep running, and it handles load without changes. Frontend releases no longer touch the backend host, and port 80 is no longer needed on any security group. |
+
+### Difference 5 — Docker Hub with stored credentials → private ECR with instance-profile access
+
+| | |
+|---|---|
+| **Before** | Images were pushed to Docker Hub using a username and password stored in Jenkins (`docker-hub-credentials`, `Jenkinsfile` lines 22–24). |
+| **After** | Two private repositories, `ict381_backend` (line 263) and `ict381_mongo` (line 269). The CI, application and database hosts authenticate through `LabInstanceProfile`. |
+| **Value added** | Security, maintainability |
+| **Why this is an improvement** | No long-lived registry password has to be stored or rotated in Jenkins. Access is controlled by the IAM role attached to each host, and the images are private instead of on a public registry. |
 
 # Question 3 — Automation with Ansible
 
