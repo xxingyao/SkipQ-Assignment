@@ -1,0 +1,20 @@
+# Rendered by prod-application.yaml onto the APPLICATION host (Question 3(b)).
+# Just the Flask backend on :5000 — the Question 2 app security group opens 5000
+# to the internet so the browser (loading the React site from S3) calls it
+# directly. The image is pulled from the PRIVATE ECR repo (`backend_ecr_repo`, a
+# Question 2 output filled into the inventory); `image_tag` is the parameter
+# Question 4/Question 5 hand a version to. The host authenticated to ECR in the
+# earlier `docker login` play, so this pull succeeds.
+#
+# `extra_hosts` maps the hostname `db` (hardcoded in app/__init__.py) to the
+# database host's private address, taken straight from the static inventory
+# (`ansible_host` of the single host in the `db` group = the Question 2
+# `database_host_private_address` output). No app code change needed.
+services:
+  backend:
+    image: {{ backend_ecr_repo }}:{{ image_tag }}
+    ports:
+      - "5000:5000"
+    extra_hosts:
+      - "db:{{ hostvars[groups['db'][0]].ansible_host }}"
+    restart: unless-stopped

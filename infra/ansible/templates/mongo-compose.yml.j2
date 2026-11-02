@@ -1,0 +1,13 @@
+# Rendered by prod-application.yaml onto the DATABASE host (Question 3(b)).
+# Just MongoDB — the co-located backend and Nginx/React containers moved to the
+# application host / S3. The image binds 0.0.0.0 (backend/DockerfileMongo), and
+# the Question 2 db security group opens 27017 to the application host only. The
+# image is pulled from the PRIVATE ECR repo (`mongo_ecr_repo`, a Question 2 output
+# filled into the inventory); the host authenticated to ECR in the earlier
+# `docker login` play, so this pull succeeds.
+services:
+  db:
+    image: {{ mongo_ecr_repo }}:{{ mongo_image_tag }}
+    ports:
+      - "27017:27017"
+    restart: unless-stopped

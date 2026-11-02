@@ -1,111 +1,73 @@
 ---
-- import_playbook: ../local-ansible/gen-gpgkey-ubuntu.yaml
-  vars:
-    hosts: localhost
-    gpg_generator_user: jenkins
-    gpg_home: "/var/lib/jenkins"
+# ============================================================================
+#  build-docker.yaml — build the backend + MongoDB images and push them to ECR
+#  Question 3(b) SCAFFOLD — complete the YOUR SCRIPT block below, then run.
+# ============================================================================
+# YOU FILL: write the build-and-push tasks yourself, in the marked block between
+#           `# --- YOUR SCRIPT STARTS HERE ---` and `# --- YOUR SCRIPT ENDS HERE ---`.
+#
+# This playbook is run via two commands — the same playbook, reused twice:
+#   # Question 3(b) — seed the ECR repos by hand (image_tag defaults to `latest`):
+#   ansible-playbook build-docker.yaml -e backend_repo=<url> -e mongo_repo=<url>
+#   # Question 4 — the Jenkins pipeline pushes an immutable release tag (v${BUILD_NUMBER}):
+#   ansible-playbook build-docker.yaml -e backend_repo=<url> -e mongo_repo=<url> -e image_tag=v42
 
-- name: Build, tag and push image to DockerHub
+- name: Build and push the backend and MongoDB images to ECR
   hosts: localhost
   connection: local
   gather_facts: false
-  become_user: jenkins
   vars:
-    jenkins_path: /var/lib/jenkins/workspace/
-    pipeline_name: pipeline1
+    aws_region: us-east-1
+
+    # The two ECR repository URLs (Question 2 `terraform output`). Pass them with
+    # -e on the command line, or fill them here.
+    backend_repo: "REPLACE_WITH_backend_ecr_repository_url"
+    mongo_repo: "REPLACE_WITH_mongo_ecr_repository_url"
+
+    # `playbook_dir` is infra/ansible, so the backend source is two levels up.
+    backend_context: "{{ playbook_dir }}/../../backend"
+
+    # Parameterize the image tag so Question 4/Question 5 can hand this
+    #   playbook a version (e.g. v${BUILD_NUMBER}). Default it to `latest` for the
+    #   Question 3(b) seed.
+    image_tag: "latest"
 
   tasks:
-  - name: Get Docker credentials from environment variables
-    set_fact:
-      DOCKER_USER: "{{ lookup('env', 'DOCKER_USER') }}"
-      DOCKER_PASSWORD: "{{ lookup('env', 'DOCKER_PASSWORD') }}"
-    no_log: true
-
-  - name: Verify Docker credentials are available
+  - name: Fail early if the ECR repository URLs are not filled in
     fail:
-      msg: "Docker credentials not found in environment variables. Please set DOCKER_USER and DOCKER_PASSWORD."
-    when: DOCKER_USER == '' or DOCKER_PASSWORD == ''
+      msg: >-
+        Set backend_repo and mongo_repo to the Question 2 ECR repository URLs
+        (terraform outputs backend_ecr_repository_url / mongo_ecr_repository_url).
+    when: backend_repo is search('REPLACE_WITH') or mongo_repo is search('REPLACE_WITH')
 
-  - name: Login to DockerHub
-    shell: "echo {{DOCKER_PASSWORD}} | docker login -u {{DOCKER_USER}} --password-stdin"
-    no_log: true
-
-  - name: Stop running containers
-    community.docker.docker_compose_v2:
-      project_src: /opt/backend
-      state: absent
-
-  - name: Get all Docker images
-    command: docker images --format "{{ '{{.Repository}}:{{.Tag}}' }}"
-    register: docker_images
-
-  - name: Set images to exclude
+  - name: Derive the ECR registry host from the repository URL
     set_fact:
-      exclude_images:
-      - "node:16.20.2-alpine"
-      - "python:3.12"
-      - "nginx:latest"
-      - "mongo:latest"
+      ecr_registry: "{{ backend_repo.split('/')[0] }}"
 
-  - name: Find images to remove
-    set_fact:
-      images_to_remove: "{{ docker_images.stdout_lines | difference(exclude_images) }}"
+  - name: Authenticate Docker to ECR through the instance profile
+    shell: >-
+      aws ecr get-login-password --region {{ aws_region }}
+      | docker login --username AWS --password-stdin {{ ecr_registry }}
+    changed_when: false
 
-  - name: Remove existing Docker images excluding specific ones
-    community.docker.docker_image:
-      name: "{{ item }}"
-      state: absent
-    loop: "{{ images_to_remove }}"
-    when: item is defined
+  # --- YOUR SCRIPT STARTS HERE ---
+  # Write the Ansible tasks that BUILD and PUSH both backend and MongoDB to their ECR repos,
+  # each tagged with `image_tag`:
+  - name: Build the backend image
+    command: docker build -t {{ backend_repo }}:{{ image_tag }} {{ backend_context }}
 
-  - name: Build backend Image
-    community.docker.docker_image:
-      name: ict381_backend
-      build:
-        path: "{{jenkins_path}}/{{pipeline_name}}/backend/"
-      source: build
+  - name: Push the backend image to ECR
+    command: docker push {{ backend_repo }}:{{ image_tag }}
 
-  - name: Tag and Push to repo for backend
-    community.docker.docker_image:
-      name: ict381_backend
-      repository: "{{DOCKER_USER}}/ict381_backend"
-      push: true
-      source: local
+  - name: Build the MongoDB image (seed data baked in from db_seed/)
+    command: docker build -t {{ mongo_repo }}:{{ image_tag }} -f {{ backend_context }}/DockerfileMongo {{ backend_context }}
 
-  - name: Build MongoDB Image
-    community.docker.docker_image:
-      name: ict381_mongo
-      build:
-        path: "{{jenkins_path}}/{{pipeline_name}}/backend/"
-        dockerfile: DockerfileMongo
-      source: build
+  - name: Push the MongoDB image to ECR
+    command: docker push {{ mongo_repo }}:{{ image_tag }}
 
-  - name: Tag and Push to repo for MongoDB
-    community.docker.docker_image:
-      name: ict381_mongo
-      repository: "{{DOCKER_USER}}/ict381_mongo"
-      push: true
-      source: local
 
-  - name: Build frontend Image
-    community.docker.docker_image:
-      name: ict381_frontend
-      build:
-        path: "{{jenkins_path}}/{{pipeline_name}}/frontend/"
-        dockerfile: Dockerfilefrontend
-      source: build
+  # --- YOUR SCRIPT ENDS HERE ---
 
-  - name: Tag and Push to repo for frontend
-    community.docker.docker_image:
-      name: ict381_frontend
-      repository: "{{DOCKER_USER}}/ict381_frontend"
-      push: true
-      source: local
-
-  - name: Prune system to conserve space
-    community.docker.docker_prune:
-      images: true
-      builder_cache: true
-      volumes: true
-      networks: true
-      containers: true
+  - name: Prune dangling build layers to conserve disk on the CI host
+    command: docker system prune -f
+    changed_when: false

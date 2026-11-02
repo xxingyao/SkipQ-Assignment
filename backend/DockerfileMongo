@@ -1,0 +1,13 @@
+FROM mongo
+
+COPY db_seed /opt
+
+# Load the seed data on first start: the official Mongo entrypoint runs scripts in
+# /docker-entrypoint-initdb.d/ against a temporary local mongod before the server
+# accepts external connections, so the `staycation` data is present and ready with
+# no "wait for Mongo" race.
+COPY db_seed_restore.sh /docker-entrypoint-initdb.d/restore.sh
+RUN chmod +x /docker-entrypoint-initdb.d/restore.sh
+
+RUN cp /etc/mongod.conf.orig /etc/mongod.conf && \
+    sed -i 's/bindIp: 127.0.0.1/bindIp: 0.0.0.0/' /etc/mongod.conf

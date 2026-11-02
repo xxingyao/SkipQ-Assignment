@@ -1,61 +1,146 @@
 ---
+# ============================================================================
+#  prod-application.yaml — deploy the split topology from the CI host
+#  Question 3(b) SCAFFOLD: the backend + database deploy playbook.
+# ============================================================================
+# YOU FILL: replace each REPLACE_WITH_... below, guided by the inline hints
+#           (search the file for `REPLACE_WITH` to find every blank; ansible-playbook
+#           errors until all are replaced). Then run from this directory:
+#   ansible-playbook prod-application.yaml                  # deploys :latest
+#   ansible-playbook prod-application.yaml -e image_tag=v42 # deploys a version
+#
+# PROVIDED (do not change): the Docker + AWS CLI install and private-ECR
+# `docker login` play, the compose render/up mechanics, and the two compose
+# templates under templates/.
 
-- name: Run application with docker containers on deployment server
-  hosts: tag_group_web
-  gather_facts: true
+# ----------------------------------------------------------------------------
+#  PROVIDED: Docker + AWS CLI on both hosts, then log in to the private ECR.
+# ----------------------------------------------------------------------------
+- name: Install Docker + AWS CLI and log in to ECR on the application and database hosts
+  hosts: app:db
+  gather_facts: false
   become: yes
   become_user: root
   become_method: sudo
   vars:
-    jenkins_path: /var/lib/jenkins/workspace/
-    pipeline_name: pipeline1
+    # One login to the registry host covers both repositories.
+    ecr_registry: "{{ backend_ecr_repo.split('/')[0] }}"
 
   tasks:
+  - name: Ensure the apt keyrings directory exists
+    file:
+      path: /etc/apt/keyrings
+      state: directory
+      mode: '0755'
 
-  - name: Retrieve Docker GPG key
+  - name: Add Docker GPG key
     get_url:
       url: https://download.docker.com/linux/ubuntu/gpg
       dest: /etc/apt/keyrings/docker.asc
-      mode: "0644"
-
-  - name: Add Docker repo
-    deb822_repository:
-      name: docker
-      types: deb
-      uris: https://download.docker.com/linux/ubuntu
-      components: stable
-      architectures: amd64
-      suites: '{{ansible_facts["distribution_release"]}}'
-      signed_by: /etc/apt/keyrings/docker.asc
-
-  - name: Update apt cache and install docker
-    apt:
-      name: docker-ce
-      state: latest
-      update_cache: true
-
-  - name: Copy dockerhub.yml from delivery machine to deployment machine
-    copy:
-      src: "{{jenkins_path}}/{{pipeline_name}}/backend/dockerhub.yml"
-      dest: /root/dockerhub.yml
-      owner: root
-      group: root
       mode: '0644'
 
-  - name: Stop running containers
-    community.docker.docker_compose_v2:
-      project_src: /root
-      files:
-        - dockerhub.yml
-      state: absent
+  - name: Add Docker repo
+    copy:
+      dest: /etc/apt/sources.list.d/docker.list
+      content: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu jammy stable\n"
+      mode: '0644'
 
-  - name: Remove all images
-    shell: docker rmi -f $(sudo docker images -a -q)
-    ignore_errors: true
-
-  - name: Use docker compose to deploy the application with dockerhub.yml file
-    community.docker.docker_compose_v2:
-      project_src: /root
+  - name: Install Docker engine, the compose plugin, and unzip (for the AWS CLI)
+    apt:
+      name:
+      - docker-ce
+      - docker-ce-cli
+      - containerd.io
+      - docker-compose-plugin
+      - unzip
       state: present
-      files:
-        - dockerhub.yml
+      update_cache: true
+
+  - name: Download the AWS CLI v2 installer
+    get_url:
+      url: https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+      dest: /tmp/awscliv2.zip
+      mode: '0644'
+
+  - name: Unpack the AWS CLI v2 installer
+    unarchive:
+      src: /tmp/awscliv2.zip
+      dest: /tmp
+      remote_src: yes
+      creates: /tmp/aws/install
+
+  - name: Install the AWS CLI v2
+    command: /tmp/aws/install --update
+    args:
+      creates: /usr/local/bin/aws
+
+  - name: Authenticate Docker to the private ECR through the instance profile
+    shell: >-
+      aws ecr get-login-password --region {{ aws_region }}
+      | docker login --username AWS --password-stdin {{ ecr_registry }}
+    changed_when: false
+
+# ----------------------------------------------------------------------------
+#  YOU FILL: MongoDB -> the DATABASE host
+# ----------------------------------------------------------------------------
+- name: Deploy MongoDB to the database host
+  # NAME THE DATABASE HOST GROUP so this play targets the host MongoDB runs on
+  #   — its own host now, not co-located with the backend.
+  hosts: db
+  gather_facts: false
+  become: yes
+  become_user: root
+  become_method: sudo
+  vars:
+    mongo_image_tag: latest       # default for the Q3(b) seed; Question 4 overrides per release with -e mongo_image_tag=v${BUILD_NUMBER}
+
+  tasks:
+  - name: Create the MongoDB compose project directory
+    file:
+      path: /opt/mongo
+      state: directory
+      mode: '0755'
+
+  - name: Render the MongoDB compose file
+    template:
+      src: templates/mongo-compose.yml.j2
+      dest: /opt/mongo/compose.yml
+      mode: '0644'
+
+  - name: Bring MongoDB up
+    community.docker.docker_compose_v2:
+      project_src: /opt/mongo
+      state: present
+
+# ----------------------------------------------------------------------------
+#  YOU FILL: backend -> the APPLICATION host
+# ----------------------------------------------------------------------------
+- name: Deploy the backend to the application host
+  # NAME THE APPLICATION HOST GROUP so this play targets the host the backend API
+  #   (port 5000) runs on, reachable by the browser.
+  hosts: app
+  gather_facts: false
+  become: yes
+  become_user: root
+  become_method: sudo
+  vars:
+    image_tag: latest       # default to `latest` so Question 4/5 can reuse
+                                                #   this deploy path via -e image_tag=v${BUILD_NUMBER}
+
+  tasks:
+  - name: Create the backend compose project directory
+    file:
+      path: /opt/backend
+      state: directory
+      mode: '0755'
+
+  - name: Render the backend compose file
+    template:
+      src: templates/backend-compose.yml.j2
+      dest: /opt/backend/compose.yml
+      mode: '0644'
+
+  - name: Bring the backend up
+    community.docker.docker_compose_v2:
+      project_src: /opt/backend
+      state: present
