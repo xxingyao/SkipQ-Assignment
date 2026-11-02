@@ -93,35 +93,41 @@ Three separate checkouts collapsed into a single monorepo checkout, and stage co
 
 **(13 marks)**
 
+All resources are in [`infra/terraform/main.tf`](infra/terraform/main.tf); the outputs are in [`infra/terraform/output.tf`](infra/terraform/output.tf).
+
 ### 1. Committed Terraform configuration
 
-| Resource | File | Notes |
+| Resource | File / line | Notes |
 |---|---|---|
-| CI EC2 instance | `TODO` | |
-| Application EC2 instance | `TODO` | |
-| Database EC2 instance | `TODO` | |
-| Elastic IP — CI host | `TODO` | |
-| Elastic IP — application host | `TODO` | |
-| S3 static-website bucket | `TODO` | website config + public-read policy |
-| ECR repository — backend | `TODO` | |
-| ECR repository — MongoDB | `TODO` | |
+| CI EC2 instance | `main.tf`, line 152 | `aws_instance.jenkins`, group `jenkins`, `ci_sg` |
+| Application EC2 instance | `main.tf`, line 169 | `aws_instance.app`, group `web`, `application_sg` |
+| Database EC2 instance | `main.tf`, line 186 | `aws_instance.db`, `database_sg`, no Elastic IP. The default subnet gives it a public IPv4 for outbound traffic only (ECR pulls, apt); inbound is limited by `database_sg` |
+| Elastic IP — CI host | `main.tf`, line 206 | `aws_eip.jenkins_eip` |
+| Elastic IP — application host | `main.tf`, line 211 | `aws_eip.app_eip` |
+| S3 static-website bucket | `main.tf`, line 221 | `awscc_s3_bucket.site` (see note below). Website config line 225, public-access block line 237, public-read policy line 245 |
+| ECR repository — backend | `main.tf`, line 263 | `ict381_backend` |
+| ECR repository — MongoDB | `main.tf`, line 269 | `ict381_mongo` |
+
+**Why the bucket uses `awscc_s3_bucket`.** The `aws_s3_bucket` resource reads the bucket's Object Lock configuration (`s3:GetBucketObjectLockConfiguration`) after creating it, and the AWS Academy Learner Lab denies that read through a service control policy. The bucket is therefore created with `awscc_s3_bucket` from the `hashicorp/awscc` provider; its website configuration, public-access block and public-read policy are ordinary `aws` provider resources.
 
 ### 2. Remote-state backend
 
 S3 backend with `use_lockfile` (Terraform ≥ 1.10), not local state.
 
-- **File:** `TODO`
-- **State bucket:** `TODO` (created in the AWS Console before `terraform init`)
+- **File:** `main.tf`, lines 1–19 (`backend "s3"` at line 13, `use_lockfile = true` at line 17)
+- **State bucket:** `ict381-eca-tfstate-xxingyao-203635632743-us-east-1-an` (created in the AWS Console before `terraform init`)
 
 ### 3. Security-group rules enforcing the boundaries
 
 | Boundary | Rule | File / line |
 |---|---|---|
-| MongoDB 27017 from application SG only | `TODO` | `TODO` |
-| SSH to application host from CI SG only | `TODO` | `TODO` |
-| SSH to database host from CI SG only | `TODO` | `TODO` |
-| Jenkins 8080 from GitHub webhook ranges only | `TODO` | `TODO` |
-| Backend API 5000 inbound from internet | `TODO` | `TODO` |
+| MongoDB 27017 from application SG only | `from_port 27017`, source `application_sg` | `main.tf`, lines 125 and 128 |
+| SSH to application host from CI SG only | `from_port 22`, source `ci_sg` | `main.tf`, lines 103 and 106 |
+| SSH to database host from CI SG only | `from_port 22`, source `ci_sg` | `main.tf`, lines 132 and 135 |
+| Jenkins 8080 from GitHub webhook ranges only | GitHub `hooks` ranges from `api.github.com/meta` | `main.tf`, line 62; IPv4 lines 65–73, IPv6 lines 74–77 |
+| Backend API 5000 inbound from internet | `from_port 5000`, `0.0.0.0/0` | `main.tf`, lines 96 and 99 |
+
+The old shared security group (22, 80, 5000, 27017, 8080, 9000 and 3000 open to `0.0.0.0/0`) was removed.
 
 ### 4. IAM instance-profile attachments
 
@@ -145,7 +151,9 @@ Covers the CI, application and database instances, the Elastic IPs, the S3 websi
 
 ### 2. S3 bucket serving the static site
 
-**Screenshot:** `TODO — evidence/q2b-s3-site.png`
+**Screenshot:** [`evidence/q2b-s3-site.png`](evidence/q2b-s3-site.png)
+
+![Placeholder page served from the S3 website endpoint](evidence/q2b-s3-site.png)
 
 ### 3. Terraform output values
 
@@ -153,14 +161,14 @@ Covers the CI, application and database instances, the Elastic IPs, the S3 websi
 
 | Output | Value | Used by |
 |---|---|---|
-| `s3_website_endpoint` | `TODO` | The public site URL |
-| `ci_host_public_address` | `TODO` | Q3a SSH, Q4 webhook target |
-| `application_host_public_dns` | `TODO` | Frontend API endpoint |
-| `application_host_private_dns` | `TODO` | Ansible/SSH deploy target |
-| `site_s3_bucket_name` | `TODO` | Q4 `aws s3 sync` target |
-| `backend_ecr_repository_url` | `TODO` | Q3b/Q4 image pushes |
-| `mongo_ecr_repository_url` | `TODO` | Q3b/Q4 image pushes |
-| `database_host_private_address` | `TODO` | Ansible target + backend Mongo endpoint |
+| `site_website_endpoint` | `ict381-eca-site-xxingyao-203635632743.s3-website-us-east-1.amazonaws.com` | The public site URL |
+| `ci_public_ip` | `3.223.88.11` | Q3a SSH, Q4 webhook target |
+| `app_public_dns` | `ec2-3-233-34-15.compute-1.amazonaws.com` | Frontend API endpoint |
+| `app_private_dns` | `ip-172-31-36-51.ec2.internal` | Ansible/SSH deploy target |
+| `site_bucket_name` | `ict381-eca-site-xxingyao-203635632743` | Q4 `aws s3 sync` target |
+| `backend_ecr_url` | `203635632743.dkr.ecr.us-east-1.amazonaws.com/ict381_backend` | Q3b/Q4 image pushes |
+| `mongo_ecr_url` | `203635632743.dkr.ecr.us-east-1.amazonaws.com/ict381_mongo` | Q3b/Q4 image pushes |
+| `db_private_ip` | `172.31.35.184` | Ansible target + backend Mongo endpoint |
 
 ## Question 2c — Reflection: current to target
 
