@@ -1,0 +1,70 @@
+---
+# ============================================================================
+#  Question 3(a) — CI host bootstrap, part 2: Jenkins
+# ============================================================================
+# Installs the JDK and Jenkins on the CI host and leaves Jenkins running on 8080.
+
+- name: Install Jenkins on the CI host
+  hosts: jenkins
+  gather_facts: false
+  become: yes
+  become_user: root
+  become_method: sudo
+
+  tasks:
+
+  - name: Install the JDK Jenkins runs on
+    apt:
+      name:
+      - openjdk-21-jdk
+      - openjdk-21-jre
+      state: present
+      update_cache: yes
+
+  - name: Add the Jenkins apt repo
+    copy:
+      dest: /etc/apt/sources.list.d/jenkins.list
+      content: "deb [trusted=yes] https://pkg.jenkins.io/debian-stable binary/\n"
+      mode: '0644'
+
+  - name: Install Jenkins
+    apt:
+      name: jenkins
+      state: present
+      update_cache: yes
+
+  # Jenkins runs the pipeline's docker builds in Question 4, so its service
+  # account needs the docker group. `register` + the guarded reboot below keep
+  # the rerun a no-op: the group membership only changes on the first run, so
+  # the reboot only fires on the first run.
+  - name: Add the jenkins user to the docker group
+    user:
+      name: jenkins
+      groups: docker
+      append: yes
+      state: present
+    register: jenkins_docker_group
+
+  - name: Reboot so the jenkins user picks up its new docker group membership
+    reboot:
+    when: jenkins_docker_group is changed
+
+  - name: Ensure Jenkins is running and enabled on 8080
+    systemd:
+      name: jenkins
+      state: started
+      enabled: yes
+
+  # Question 4's backend deploy stage runs Ansible as the `jenkins` service
+  # account, which cannot read the `ubuntu`-owned 0400 key common.yaml placed in
+  # /home/ubuntu. Give jenkins its OWN 0400 copy so the pipeline can SSH into the
+  # application/database hosts. The deploy inventory references the key as
+  # `~/labsuser.pem`, which resolves per-user: /home/ubuntu for the manual
+  # Question 3(b) run, /var/lib/jenkins here.
+  - name: Copy the vockey private key (labsuser.pem) into the jenkins home
+    copy:
+      src: labsuser.pem
+      dest: /var/lib/jenkins/labsuser.pem
+      owner: jenkins
+      group: jenkins
+      mode: '0400'

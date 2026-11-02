@@ -1,1 +1,6 @@
+# Bootstrap inventory (Question 3(a)).
+# Question 2 `ci_host_public_address` output (the Elastic IP, stable across Start
+# Lab). Fill the address in after `terraform apply`. SSH uses labsuser.pem, set as
+# `private_key_file` in ansible.cfg alongside this file.
 [jenkins]
+ci ansible_host=52.54.76.84 ansible_user=ubuntu

@@ -1,0 +1,77 @@
+
+PLAY [Bootstrap the CI host — base packages, Docker, Ansible, AWS CLI] *********
+
+TASK [Install base packages] ***************************************************
+ok: [ci] => (item=python3-pip)
+ok: [ci] => (item=gnupg)
+ok: [ci] => (item=software-properties-common)
+ok: [ci] => (item=unzip)
+ok: [ci] => (item=git)
+ok: [ci] => (item=acl)
+
+TASK [Retrieve Ansible PPA GPG key] ********************************************
+changed: [ci]
+
+TASK [Add Ansible PPA repo] ****************************************************
+changed: [ci]
+
+TASK [Install Ansible on the CI host] ******************************************
+changed: [ci]
+
+TASK [Ensure the apt keyrings directory exists] ********************************
+ok: [ci]
+
+TASK [Add Docker GPG key] ******************************************************
+changed: [ci]
+
+TASK [Add Docker repo] *********************************************************
+changed: [ci]
+
+TASK [Install Docker engine and the compose plugin] ****************************
+changed: [ci]
+
+TASK [Add the ubuntu user to the docker group] *********************************
+changed: [ci]
+
+TASK [Download the AWS CLI v2 installer] ***************************************
+changed: [ci]
+
+TASK [Unpack the AWS CLI v2 installer] *****************************************
+changed: [ci]
+
+TASK [Install the AWS CLI v2] **************************************************
+changed: [ci]
+
+TASK [Copy the vockey private key (labsuser.pem) onto the CI host for the ubuntu user] ***
+changed: [ci]
+
+PLAY RECAP *********************************************************************
+ci                         : ok=13   changed=11   unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+
+PLAY [Install Jenkins on the CI host] ******************************************
+
+TASK [Install the JDK Jenkins runs on] *****************************************
+changed: [ci]
+
+TASK [Add the Jenkins apt repo] ************************************************
+changed: [ci]
+
+TASK [Install Jenkins] *********************************************************
+changed: [ci]
+
+TASK [Add the jenkins user to the docker group] ********************************
+changed: [ci]
+
+TASK [Reboot so the jenkins user picks up its new docker group membership] *****
+changed: [ci]
+
+TASK [Ensure Jenkins is running and enabled on 8080] ***************************
+ok: [ci]
+
+TASK [Copy the vockey private key (labsuser.pem) into the jenkins home] ********
+changed: [ci]
+
+PLAY RECAP *********************************************************************
+ci                         : ok=20   changed=17   unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+

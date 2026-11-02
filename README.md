@@ -231,15 +231,37 @@ Before = `automation/terraform/` as migrated in Q1 (commit `621a3ef`). After = [
 
 > Compare the provided `infra/local-ansible/` against the base `automation/local-ansible/`. Identify the major changes and explain why each was made: what was removed, what was added, and which files were deleted or renamed.
 
+The provided folder was copied over `infra/local-ansible/`; the commit's diff of that folder shows every change below.
+
+**Files at a glance**
+
+| Base `automation/local-ansible/` | Provided `infra/local-ansible/` | Type |
+|---|---|---|
+| `application1.yaml` | — | Deleted |
+| `gen-gpgkey-ubuntu.yaml` | — | Deleted |
+| `application2.yaml` | `jenkins.yaml` | Renamed and rewritten |
+| `common.yaml` | `common.yaml` | Modified (cut down) |
+| `ansible.cfg`, `inventory` | `ansible.cfg`, `inventory` | Modified |
+
+**What changed and why**
+
 | Change | Type | What changed | Why |
 |---|---|---|---|
-| `TODO` | Added / Removed / Renamed / Deleted | `TODO` | `TODO` |
-| `TODO` | | `TODO` | `TODO` |
-| `TODO` | | `TODO` | `TODO` |
+| App build and deploy on the CI host | Deleted (`application1.yaml`) | Cloned `StaycationX` and `myReactApp` onto the CI host with deploy keys, built the images, pushed them to Docker Hub, and ran the whole app there with `docker compose` and `dockerhub.yml`. | The CI host must not host the application or the database. Images now go to private ECR (Q3b `build-docker.yaml`) and are deployed to the separate application and database hosts by `infra/ansible/`. One monorepo also replaces the two separate repos. |
+| GPG key and `pass` credential store | Deleted (`gen-gpgkey-ubuntu.yaml`) | Generated a GPG key and set up `pass` so Docker could store the Docker Hub password. | Docker Hub is replaced by ECR, which the CI host reaches through `LabInstanceProfile`. With no registry password to store, the credential store, `pass`, `rng-tools`, the credential helper and the `juju4.gpgkey_generate` role are all removed. |
+| Secrets and GitHub deploy keys | Removed (`common.yaml`) | Loading `GITHUB_PAT` and the Docker Hub login from `secrets.yaml`, generating a deploy key per repo, and uploading them to GitHub. | There's no Docker Hub login and one monorepo. In Q3b the CI host clones it over HTTPS with a read-only fine-grained token, so no secrets file or deploy keys are needed. |
+| Terraform on the CI host | Removed (`application2.yaml` → `jenkins.yaml`) | The HashiCorp repository and the `terraform` install. | Terraform now runs once, locally, from one config (Q2). The pipeline no longer provisions infrastructure. |
+| AWS CLI v2 | Added (`common.yaml`) | Downloads and installs AWS CLI v2, each step guarded with `creates:`. | The CI host needs `aws` for ECR login and `aws ecr list-images` (Q3b) and `aws s3 sync` (Q4). The guards make reruns skip these steps. |
+| Docker install and docker groups | Changed / added (`common.yaml`, `jenkins.yaml`) | Installs `docker-ce`, `docker-ce-cli`, `containerd.io` and `docker-compose-plugin` with `state: present` (was `docker-ce` with `state: latest`). Adds both `ubuntu` and `jenkins` to the `docker` group. | The compose plugin is needed for `docker compose` (Q4 test harness). `ubuntu` runs Docker in the Q3b build and `jenkins` runs it in the Q4 pipeline, without `sudo`. `state: present` doesn't upgrade on every rerun. |
+| SSH key on the CI host | Added (`common.yaml`, `jenkins.yaml`) | Copies `labsuser.pem` to `/home/ubuntu` and `/var/lib/jenkins`, each owned by that user, mode `0400`. | The application and database hosts only accept SSH from the CI host, so Ansible deploys from there: `ubuntu` for the manual Q3b run, `jenkins` for the Q4 pipeline. |
+| Guarded reboot | Changed (`jenkins.yaml`) | Base rebooted on every run. Now it only reboots `when:` the `jenkins` docker-group change actually happened. | The reboot is only needed once. Guarding it, together with `state: present` and the `creates:` guards, keeps a second run at `changed=0` (Q3c idempotency). |
+| Connection settings | Changed (`ansible.cfg`, `inventory`) | Added `host_key_checking = False` and pinned `interpreter_python = /usr/bin/python3`. The inventory now names the host directly: `ci ansible_host=<Elastic IP> ansible_user=ubuntu`. | The CI host can be rebuilt, which changes its SSH host key and would otherwise block the bootstrap. Its Elastic IP from Q2 is stable, so the inventory can point at it directly. |
 
 ### (a) Bootstrap run
 
 **Log:** [`evidence/q3a-bootstrap.log`](evidence/q3a-bootstrap.log) — `ansible-playbook common.yaml jenkins.yaml`
+
+Both plays finished with `failed=0` (final `PLAY RECAP`: `ci : ok=20 changed=17 unreachable=0 failed=0`).
 
 ### (a) Bootstrap proof
 
@@ -247,11 +269,13 @@ Before = `automation/terraform/` as migrated in Q1 (commit `621a3ef`). After = [
 
 | Check | Result |
 |---|---|
-| Docker version | `TODO` |
-| Ansible version | `TODO` |
-| AWS CLI version | `TODO` |
-| `labsuser.pem` present on host | `TODO` |
-| Jenkins on 8080 (`X-Jenkins` header) | `TODO` |
+| Docker version | `Docker version 29.9.2, build a82e528` |
+| Ansible version | `ansible [core 2.21.5]` |
+| AWS CLI version | `aws-cli/2.39.3` |
+| `labsuser.pem` present on host | `-r-------- 1 ubuntu ubuntu 1674 … /home/ubuntu/labsuser.pem` |
+| Jenkins on 8080 (`X-Jenkins` header) | `HTTP/1.1 403 Forbidden` with `X-Jenkins: 2.580.2` (403 is expected before login) |
+
+The Jenkins check uses `curl -sI http://localhost:8080 | grep -iE "^HTTP|^X-Jenkins"` instead of `| head -5`, because Jenkins sends the `X-Jenkins` header after its security headers, outside the first five lines.
 
 ## Question 3b — Fill in and run the two deploy playbooks
 
