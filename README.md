@@ -360,15 +360,27 @@ It must be on those two hosts because they are the ones that pull the images: `d
 
 **Log:** [`evidence/q3c-idempotency.log`](evidence/q3c-idempotency.log)
 
-`PLAY RECAP` reports `changed=0` on the second run.
+The log holds the second run of the deploy and the later runs of the bootstrap.
 
 ```
-TODO — paste the PLAY RECAP line here
+# Deploy, second run (ansible-playbook prod-application.yaml)
+application : ok=10 changed=0 unreachable=0 failed=0 skipped=1
+database    : ok=10 changed=0 unreachable=0 failed=0 skipped=1
+
+# Bootstrap, third run (ansible-playbook common.yaml jenkins.yaml)
+ci          : ok=12 changed=0 unreachable=0 failed=0 skipped=1
+ci          : ok=18 changed=0 unreachable=0 failed=0 skipped=2
 ```
+
+The bootstrap's second run reported `changed=2`. Both were `common.yaml`'s "Download the AWS CLI v2 installer" and "Unpack the AWS CLI v2 installer", which write to `/tmp`. The first run's guarded reboot (in `jenkins.yaml`) emptied `/tmp`, so the `creates:` checks found nothing and the files were fetched again; the install itself was skipped because `/usr/local/bin/aws` already existed. With no reboot in between, the third run reported `changed=0`.
 
 ### (c) Why the idempotent deploy matters
 
-`TODO — ground in: how often Q4's pipeline runs prod-application.yaml (every merge to main); what would happen each run if re-deploying tore down and rebuilt even when nothing changed; what Q5's rollback does with this same playbook.`
+Q4's pipeline runs `prod-application.yaml` on every merge to `main`, and Q5's rollback runs the same playbook with an older `-e image_tag`. An idempotent deploy only changes what is different. When nothing changed, the run reports `changed=0` and leaves both hosts alone; when only the backend tag changed, only the backend container is recreated.
+
+If the deploy tore everything down and rebuilt it every time, each merge would restart the backend and cause downtime even with no change. It would also tear down the MongoDB container. My `mongo-compose.yml.j2` declares no named volume, so a fresh container starts with an empty data directory and re-seeds itself, wiping every order and account created in production since the last deploy. For a rollback, idempotency means only the backend image changes, so the rollback is quick and predictable and does not touch the database.
+
+
 
 ---
 

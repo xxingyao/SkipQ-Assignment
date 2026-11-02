@@ -1,0 +1,215 @@
+
+PLAY [Install Docker + AWS CLI and log in to ECR on the application and database hosts] ***
+
+TASK [Ensure the apt keyrings directory exists] ********************************
+ok: [application]
+ok: [database]
+
+TASK [Add Docker GPG key] ******************************************************
+ok: [application]
+ok: [database]
+
+TASK [Add Docker repo] *********************************************************
+ok: [application]
+ok: [database]
+
+TASK [Install Docker engine, the compose plugin, and unzip (for the AWS CLI)] ***
+ok: [application]
+ok: [database]
+
+TASK [Download the AWS CLI v2 installer] ***************************************
+ok: [application]
+ok: [database]
+
+TASK [Unpack the AWS CLI v2 installer] *****************************************
+skipping: [application]
+skipping: [database]
+
+TASK [Install the AWS CLI v2] **************************************************
+ok: [application]
+ok: [database]
+
+TASK [Authenticate Docker to the private ECR through the instance profile] *****
+ok: [application]
+ok: [database]
+
+PLAY [Deploy MongoDB to the database host] *************************************
+
+TASK [Create the MongoDB compose project directory] ****************************
+ok: [database]
+
+TASK [Render the MongoDB compose file] *****************************************
+ok: [database]
+
+TASK [Bring MongoDB up] ********************************************************
+ok: [database]
+
+PLAY [Deploy the backend to the application host] ******************************
+
+TASK [Create the backend compose project directory] ****************************
+ok: [application]
+
+TASK [Render the backend compose file] *****************************************
+ok: [application]
+
+TASK [Bring the backend up] ****************************************************
+ok: [application]
+
+PLAY RECAP *********************************************************************
+application                : ok=10   changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   
+database                   : ok=10   changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   
+
+
+PLAY [Bootstrap the CI host — base packages, Docker, Ansible, AWS CLI] *********
+
+TASK [Install base packages] ***************************************************
+ok: [ci] => (item=python3-pip)
+ok: [ci] => (item=gnupg)
+ok: [ci] => (item=software-properties-common)
+ok: [ci] => (item=unzip)
+ok: [ci] => (item=git)
+ok: [ci] => (item=acl)
+
+TASK [Retrieve Ansible PPA GPG key] ********************************************
+ok: [ci]
+
+TASK [Add Ansible PPA repo] ****************************************************
+ok: [ci]
+
+TASK [Install Ansible on the CI host] ******************************************
+ok: [ci]
+
+TASK [Ensure the apt keyrings directory exists] ********************************
+ok: [ci]
+
+TASK [Add Docker GPG key] ******************************************************
+ok: [ci]
+
+TASK [Add Docker repo] *********************************************************
+ok: [ci]
+
+TASK [Install Docker engine and the compose plugin] ****************************
+ok: [ci]
+
+TASK [Add the ubuntu user to the docker group] *********************************
+ok: [ci]
+
+TASK [Download the AWS CLI v2 installer] ***************************************
+changed: [ci]
+
+TASK [Unpack the AWS CLI v2 installer] *****************************************
+changed: [ci]
+
+TASK [Install the AWS CLI v2] **************************************************
+ok: [ci]
+
+TASK [Copy the vockey private key (labsuser.pem) onto the CI host for the ubuntu user] ***
+ok: [ci]
+
+PLAY RECAP *********************************************************************
+ci                         : ok=13   changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+
+PLAY [Install Jenkins on the CI host] ******************************************
+
+TASK [Install the JDK Jenkins runs on] *****************************************
+ok: [ci]
+
+TASK [Add the Jenkins apt repo] ************************************************
+ok: [ci]
+
+TASK [Install Jenkins] *********************************************************
+ok: [ci]
+
+TASK [Add the jenkins user to the docker group] ********************************
+ok: [ci]
+
+TASK [Reboot so the jenkins user picks up its new docker group membership] *****
+skipping: [ci]
+
+TASK [Ensure Jenkins is running and enabled on 8080] ***************************
+ok: [ci]
+
+TASK [Copy the vockey private key (labsuser.pem) into the jenkins home] ********
+ok: [ci]
+
+PLAY RECAP *********************************************************************
+ci                         : ok=19   changed=2    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   
+
+
+PLAY [Bootstrap the CI host — base packages, Docker, Ansible, AWS CLI] *********
+
+TASK [Install base packages] ***************************************************
+ok: [ci] => (item=python3-pip)
+ok: [ci] => (item=gnupg)
+ok: [ci] => (item=software-properties-common)
+ok: [ci] => (item=unzip)
+ok: [ci] => (item=git)
+ok: [ci] => (item=acl)
+
+TASK [Retrieve Ansible PPA GPG key] ********************************************
+ok: [ci]
+
+TASK [Add Ansible PPA repo] ****************************************************
+ok: [ci]
+
+TASK [Install Ansible on the CI host] ******************************************
+ok: [ci]
+
+TASK [Ensure the apt keyrings directory exists] ********************************
+ok: [ci]
+
+TASK [Add Docker GPG key] ******************************************************
+ok: [ci]
+
+TASK [Add Docker repo] *********************************************************
+ok: [ci]
+
+TASK [Install Docker engine and the compose plugin] ****************************
+ok: [ci]
+
+TASK [Add the ubuntu user to the docker group] *********************************
+ok: [ci]
+
+TASK [Download the AWS CLI v2 installer] ***************************************
+ok: [ci]
+
+TASK [Unpack the AWS CLI v2 installer] *****************************************
+skipping: [ci]
+
+TASK [Install the AWS CLI v2] **************************************************
+ok: [ci]
+
+TASK [Copy the vockey private key (labsuser.pem) onto the CI host for the ubuntu user] ***
+ok: [ci]
+
+PLAY RECAP *********************************************************************
+ci                         : ok=12   changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   
+
+
+PLAY [Install Jenkins on the CI host] ******************************************
+
+TASK [Install the JDK Jenkins runs on] *****************************************
+ok: [ci]
+
+TASK [Add the Jenkins apt repo] ************************************************
+ok: [ci]
+
+TASK [Install Jenkins] *********************************************************
+ok: [ci]
+
+TASK [Add the jenkins user to the docker group] ********************************
+ok: [ci]
+
+TASK [Reboot so the jenkins user picks up its new docker group membership] *****
+skipping: [ci]
+
+TASK [Ensure Jenkins is running and enabled on 8080] ***************************
+ok: [ci]
+
+TASK [Copy the vockey private key (labsuser.pem) into the jenkins home] ********
+ok: [ci]
+
+PLAY RECAP *********************************************************************
+ci                         : ok=18   changed=0    unreachable=0    failed=0    skipped=2    rescued=0    ignored=0   
+
