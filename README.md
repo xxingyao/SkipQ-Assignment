@@ -135,9 +135,9 @@ The old shared security group (22, 80, 5000, 27017, 8080, 9000 and 3000 open to 
 
 | Host | File / line |
 |---|---|
-| CI | `TODO` |
-| Application | `TODO` |
-| Database | `TODO` |
+| CI | `main.tf`, line 157 |
+| Application | `main.tf`, line 174 |
+| Database | `main.tf`, line 191 |
 
 ## Question 2b — Run it and capture the evidence
 
@@ -162,13 +162,13 @@ Covers the CI, application and database instances, the Elastic IPs, the S3 websi
 | Output | Value | Used by |
 |---|---|---|
 | `site_website_endpoint` | `ict381-eca-site-xxingyao-203635632743.s3-website-us-east-1.amazonaws.com` | The public site URL |
-| `ci_public_ip` | `3.223.88.11` | Q3a SSH, Q4 webhook target |
-| `app_public_dns` | `ec2-3-233-34-15.compute-1.amazonaws.com` | Frontend API endpoint |
-| `app_private_dns` | `ip-172-31-36-51.ec2.internal` | Ansible/SSH deploy target |
+| `ci_public_ip` | `52.54.76.84` | Q3a SSH, Q4 webhook target |
+| `app_public_dns` | `ec2-3-214-100-242.compute-1.amazonaws.com` | Frontend API endpoint |
+| `app_private_dns` | `ip-172-31-42-96.ec2.internal` | Ansible/SSH deploy target |
 | `site_bucket_name` | `ict381-eca-site-xxingyao-203635632743` | Q4 `aws s3 sync` target |
 | `backend_ecr_url` | `203635632743.dkr.ecr.us-east-1.amazonaws.com/ict381_backend` | Q3b/Q4 image pushes |
 | `mongo_ecr_url` | `203635632743.dkr.ecr.us-east-1.amazonaws.com/ict381_mongo` | Q3b/Q4 image pushes |
-| `db_private_ip` | `172.31.35.184` | Ansible target + backend Mongo endpoint |
+| `db_private_ip` | `172.31.40.21` | Ansible target + backend Mongo endpoint |
 
 ## Question 2c — Reflection: current to target
 

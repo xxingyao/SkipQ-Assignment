@@ -1,0 +1,8 @@
+app_private_dns = "ip-172-31-42-96.ec2.internal"
+app_public_dns = "ec2-3-214-100-242.compute-1.amazonaws.com"
+backend_ecr_url = "203635632743.dkr.ecr.us-east-1.amazonaws.com/ict381_backend"
+ci_public_ip = "52.54.76.84"
+db_private_ip = "172.31.40.21"
+mongo_ecr_url = "203635632743.dkr.ecr.us-east-1.amazonaws.com/ict381_mongo"
+site_bucket_name = "ict381-eca-site-xxingyao-203635632743"
+site_website_endpoint = "ict381-eca-site-xxingyao-203635632743.s3-website-us-east-1.amazonaws.com"
