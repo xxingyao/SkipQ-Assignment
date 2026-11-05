@@ -513,48 +513,68 @@ With the guards, a feature-branch build runs the gate and stops; only a green `m
 
 ### (c) The tagged release
 
-**Screenshot:** `TODO — evidence/q4c-github-tags.png`
+**Screenshot:** [`evidence/q4c-github-tags.png`](evidence/q4c-github-tags.png)
 
-Release tag pushed: `TODO — vN`
+Release tag pushed: **`v3`**, on merge commit `337784e` ("Merge pull request #3 from ICT381/feat/q4-cicd"). Pushed by the **Tag release** stage of Jenkins build `main #3`, `RELEASE_TAG = "v${BUILD_NUMBER}"`.
 
 ### (c) The live site, logged in end to end
 
-**Screenshot:** `TODO — evidence/q4c-live-site-login.png`
+**Screenshot:** [`evidence/q4c-live-site-login.png`](evidence/q4c-live-site-login.png)
 
 Single screenshot showing all three:
-- [ ] Browser address bar with the S3 website URL
-- [ ] The "Log In" heading (the Q4 UI change — proves this is *this* pipeline's release, not the Q3b deploy)
-- [ ] Network tab: login request to `http://<application_host_public_dns>:5000/...` at **status 200**
+- [x] Browser address bar with the S3 website URL `http://ict381-eca-site-xxingyao-203635632743.s3-website-us-east-1.amazonaws.com`
+- [x] The "Log In" heading (the Q4 UI change — proves this is *this* pipeline's release, not the Q3b deploy). SkipQ's sign-in page heading was `SkipQ`; commit `ab9ee71` changed it to `Log In` in `frontend/src/Pages/SignIn.js`.
+- [x] Network tab: `POST http://ec2-3-214-100-242.compute-1.amazonaws.com:5000/api/user/gettoken` at **status 200** (`Server: gunicorn`, `Access-Control-Allow-Origin` = the S3 website origin)
 
 ### (c) Webhook
 
-**Screenshot:** `TODO — evidence/q4c-webhook.png`
+**Screenshot:** [`evidence/q4c-webhook.png`](evidence/q4c-webhook.png)
 
-Webhook at `http://<ci_host_public_address>:8080/github-webhook/`, subscribed to Pushes and Pull requests, with a 200 in Recent Deliveries.
+Webhook at `http://52.54.76.84:8080/github-webhook/`, content type `application/json`, subscribed to **Pushes** and **Pull requests**. Recent Deliveries shows the `push` delivery of `feat/q4-cicd` at 16:34:42 with **Response 200**, which started Jenkins build `feat/q4-cicd #1`.
 
 ### (c) The pipeline stood up
 
 | Screenshot | Shows |
 |---|---|
-| `TODO — evidence/q4c-job-config.png` | Multibranch job configuration |
-| `TODO — evidence/q4c-credentials.png` | `github-ssh-key` and the fine-grained GitHub token |
+| [`evidence/q4c-job-config.png`](evidence/q4c-job-config.png) | Multibranch job `ict381-eca`: GitHub branch source `https://github.com/ICT381/ict381-2026-t02-eca-xxingyao.git` with the fine-grained token; behaviours *Discover branches* (exclude branches also filed as PRs), *Discover pull requests from origin* (current PR revision), *Checkout over SSH* (`github-ssh-key`); build by `Jenkinsfile` |
+| [`evidence/q4c-credentials.png`](evidence/q4c-credentials.png) | `github-ssh-key` (SSH username with private key, user `git`, GitHub deploy key with write access) and `github-token` (fine-grained GitHub token) |
+
+The `jenkins` user's `known_hosts` holds GitHub's host keys (`ssh-keyscan github.com`), so checkout and the tag push verify the host key.
+
+The GitHub Classroom *Feedback* pull request (#1, head `main`) was closed while the pipeline ran. With *Exclude branches that are also filed as PRs*, an open PR whose head is `main` hides `main` from branch discovery, so `main` would never build or deploy. It was reopened afterwards.
 
 ### (c) The gate is causal — red → green → merge → deploy
 
 | Step | Evidence | Screenshot |
 |---|---|---|
-| 1. Push with failing test → red build, PR ✗ | `TODO` | `TODO` |
-| 2. Fix in a second commit → green, PR ✓ | `TODO` | `TODO` |
-| 3. Merge after the green check | `TODO` | `TODO` |
-| 4. Gate re-runs on `main`, then deploy stages run | `TODO` | `TODO` |
+| 1. Push with failing test → red build, PR ✗ | `feat/q4-cicd` pushed with the Q4a test still expecting `'Refunded'`. Jenkins `feat/q4-cicd #1` and the PR build for PR #3 fail at **Frontend tests** (`Expected: "Refunded"`, `Received: "Refund"`, 1 failed / 3 passed); Backend tests, Tag release and both Deploy stages are skipped. PR #3 shows `continuous-integration/jenkins/pr-head` ✗. | [`q4c-gate-red.png`](evidence/q4c-gate-red.png) |
+| 2. Fix in a second commit → green, PR ✓ | Commit `ab9ee71` changes the assertion to `'Refund'` (and the heading to `Log In`). The PR build re-runs both suites: `pr-head` ✓ "This commit looks good". | [`q4c-gate-green.png`](evidence/q4c-gate-green.png) |
+| 3. Merge after the green check | PR #3 merged as `337784e` only after the ✓; the commit list shows `ebb99d6` ✗ then `ab9ee71` ✓. | [`q4c-gate-merge.png`](evidence/q4c-gate-merge.png) |
+| 4. Gate re-runs on `main`, then deploy stages run | `main #3`: Checkout → Frontend tests → Backend tests → Tag release (`v3`) → Deploy frontend to S3 → Deploy backend to app host, all green (4 min 35 s). | [`q4c-gate-deploy.png`](evidence/q4c-gate-deploy.png) |
 
 No red pull request was merged at any point.
+
+`main #2`, the first build of the merge commit, failed at **Backend tests** with `Conflict. The container name "/backend-db-1" is already in use`. When PR #3 closed, `feat/q4-cicd` became a plain branch again and built at the same moment. Both builds ran `test-compose.yml` from a directory named `backend`, so they shared the Compose project name and container names. The gate still held: Tag release and both Deploy stages were skipped. `main #3` re-ran the same commit with no concurrent build and passed. (See Q4d.)
 
 ### (c) Why the SSH-tunnelled Jenkins access is secure
 
 > You reach the Jenkins UI over an SSH tunnel instead of opening port 8080 to the internet. What makes this access path secure — what protects it, and which attack surface does it remove?
 
-`TODO`
+**What protects it.** The UI is reached with `ssh -i labsuser.pem -L 8080:localhost:8080 ubuntu@52.54.76.84`, then `http://localhost:8080`.
+- **Authentication:** the SSH server on the CI host accepts only the `vockey` key pair. Only the holder of the private key can open the tunnel. A password guess or a scan of port 22 gets nothing.
+- **Encryption and integrity:** Jenkins itself serves plain HTTP. Inside the tunnel, the Jenkins admin password, the session cookie and every page (credential IDs, build logs) travel encrypted, so nobody on the path can read or alter them.
+- **Host verification:** SSH checks the CI host's host key, so a man-in-the-middle cannot pose as the CI host.
+
+**What attack surface it removes.** In `ci_sg`, port 8080 is open only to GitHub's published webhook ranges (`192.30.252.0/22`, `185.199.108.0/22`, `140.82.112.0/20`, `143.55.64.0/20`, …), not to `0.0.0.0/0`. So the Jenkins login page, the script console and the Jenkins CLI endpoint cannot be reached from the internet. That rules out:
+- password brute-forcing of the admin account;
+- unauthenticated exploits against Jenkins itself, e.g. CVE-2024-23897, where the built-in CLI let unauthenticated attackers read arbitrary files on the controller (Jenkins Security Advisory 2024-01-24);
+- sniffing the admin session over unencrypted HTTP.
+
+This matters because the CI host is the most privileged machine in the system. It holds the GitHub deploy key with **write** access (it pushes release tags), its instance profile can push to ECR and overwrite the S3 site, and it can SSH into the app and DB hosts. A compromised Jenkins means a compromised production.
+
+**What remains.** Port 22 is still open to `0.0.0.0/0` (Learner Lab IPs change between sessions), so it relies on key-only authentication. It could be tightened to the operator's own IP, or replaced with AWS Systems Manager Session Manager port forwarding so no inbound port is needed at all.
+
+References: [Jenkins Security Advisory 2024-01-24 (CVE-2024-23897)](https://www.jenkins.io/security/advisory/2024-01-24/) · [GitHub meta API — webhook IP ranges](https://api.github.com/meta) · [OpenSSH `ssh -L` local forwarding](https://man.openbsd.org/ssh#L)
 
 ## Question 4d — Reflection
 
@@ -564,13 +584,35 @@ No red pull request was merged at any point.
 
 > A teammate argues the gate is wasteful: when a PR touches only `/frontend`, run the React suite alone; when it touches only `/backend`, run the backend suite alone. Counter this.
 
-`TODO — give the context and the reasons for running both suites, grounded in this build.`
+**Context.** SkipQ is one product kept in two directories, and it is released as one unit. Every green `main` build creates **one** tag (`RELEASE_TAG = "v${BUILD_NUMBER}"`, e.g. `v3`) and runs **both** deploy stages, whichever directory the pull request touched:
+- `aws s3 sync build/ s3://${SITE_BUCKET} --delete` publishes the frontend;
+- `build-docker.yaml -e image_tag=${RELEASE_TAG}` followed by `prod-application.yaml -e image_tag=${RELEASE_TAG} -e mongo_image_tag=${RELEASE_TAG}` rebuilds and redeploys the backend and MongoDB.
+
+So the gate does not certify a diff. It certifies the release that is about to ship, and that release always contains both tiers.
+
+**Why both suites run on every change:**
+
+1. **A "frontend-only" PR still ships a freshly built backend.** The Deploy backend stage rebuilds the backend and MongoDB images for every tag. Their bases are not frozen: `backend/DockerfileMongo` is `FROM mongo` (i.e. `latest`), `backend/Dockerfile` is `FROM python:3.12-slim`, and the test service in `backend/test-compose.yml` is `python:3.12`. If PR #3 had touched only `/frontend`, `v3` would still have carried a MongoDB image pulled that day. The backend suite (`tests/unit` and `tests/functional`, run against the seeded `DockerfileMongo` database) is the only check on that image before it reaches the database host. Skipping it would put an untested backend under a release tag that claims to be tested.
+2. **The two suites guard two halves of one rule.** `frontend/src/domain/orderActions.js` says *"The backend owns the rule; this mirrors only the question of what to show"*. It hard-codes the backend's status names (`PendingAcceptance`, `Rejected` → `Refunded`, `NoShow`), `NO_SHOW_AFTER_MINUTES = 30`, and the naive-UTC `status_updated_at` format. The backend half is pinned by `backend/tests/unit/test_order_rules.py` (`test_the_table_permits_every_move_it_declares`, `test_no_show_is_refused_inside_the_window`, …), and the frontend half by `orderActions.test.js`. A "backend-only" change to the order table is really a change to both tiers. Running both suites on the same commit re-asserts both halves together, instead of checking one side against an old build of the other.
+3. **In this repo, path filters would miss the changes that matter most.** Many changes live in neither directory: `Jenkinsfile`, `infra/ansible/*.yaml`, `infra/terraform/`. PR #3 itself touched `Jenkinsfile`, `backend/`, `frontend/` and `README.md`. A path filter would either run nothing for a `Jenkinsfile` or Ansible change (exactly the changes that alter how the build tests and deploys) or need a hand-maintained list that can drift.
+4. **The saving is small and the risk is not.** `main #3` ran both suites, tagged and deployed in **4 min 35 s**, and most of the frontend time is `npm ci`. A bad release, by contrast, means rolling back the S3 site, the ECR images and the app host.
+
+Change-scoped testing makes sense where each directory deploys independently and a build graph (Nx, Bazel) knows the dependencies. Here every release deploys both tiers. Scoping the *tests* while the *deploy* stays whole is exactly the mismatch the teammate's proposal would create.
 
 ### (d)(b) Against testing once
 
 > The gate runs the whole suite on every feature-branch push, then again on the `main` build before the deploy stages. Explain why the second run is not redundant.
 
-`TODO`
+1. **The PR build does not test the commit that is released.** In the job configuration, *Discover pull requests from origin* uses **"The current pull request revision"**. Jenkins builds the PR **head** (`ab9ee71`) and reports it as `continuous-integration/jenkins/pr-head`. The commit that was tagged `v3` and deployed is the **merge commit `337784e`**, which no build had seen until `main` built it. If `main` moves after a branch is cut, two pull requests that are each green can combine into a red `main`. For example, one renames a status in `backend/app/models/order.py` while the other adds a frontend action for the old name in `orderActions.js`. Only the `main` run tests the merged tree.
+2. **It tests the exact inputs the release is built from, at the moment it is built.** The `main` build checks out `337784e`, runs the gate, then tags that commit and builds the S3 bundle and the `v3` images from it. Between the PR run and the merge, the inputs outside Git can change:
+   - `FROM mongo` resolves to whatever `latest` is that day;
+   - `npm ci` downloads from the registry again;
+   - the clock moves on. The backend dashboard test counts today's UTC orders and fails between 00:00 and 05:00 UTC (see Q4a(3)).
+
+   A green check from earlier is evidence about a different moment.
+3. **It is the last guard right before the irreversible steps.** **Tag release** pushes a permanent tag. **Deploy frontend to S3** overwrites the live site with `--delete`. **Deploy backend to app host** replaces the running containers. `main #2` shows this guard at work. It was the first build of merge commit `337784e`, and it failed at **Backend tests** (`Conflict. The container name "/backend-db-1" is already in use`, caused by a `feat/q4-cicd` build running at the same moment). Tag release and both Deploy stages were skipped, so no `v2` tag exists and production stayed on the previous release. The earlier feature-branch run was already green and could not have stopped that.
+
+**What this taught me about the gate.** Concurrent builds on the CI host share the Compose project name `backend`, taken from the directory name, so they can break each other. Giving each run its own project would fix this, e.g. `docker compose -p "skipq-test-${EXECUTOR_NUMBER}" -f test-compose.yml …` in the Backend tests stage and its `post` step. Two builds on one node never share an executor number. With that change, the `main` re-run fails only for real reasons.
 
 ---
 
@@ -584,32 +626,117 @@ No red pull request was merged at any point.
 
 | Artifact | Exact value | Defined in |
 |---|---|---|
-| Release tag format | `TODO` | `TODO` |
-| Backend ECR repository | `TODO` | `TODO` |
-| MongoDB ECR repository | `TODO` | `TODO` |
-| Site S3 bucket | `TODO` | `TODO` |
-| Deploy playbook | `infra/ansible/prod-application.yaml` | `TODO` |
-| Image tag parameters | `-e image_tag=` / `-e mongo_image_tag=` | `TODO` |
+| Release tag format | `RELEASE_TAG = "v${BUILD_NUMBER}"`, e.g. `v3` on merge commit `337784e` | `Jenkinsfile` line 24; pushed by `git tag ${RELEASE_TAG} && git push origin ${RELEASE_TAG}` (line 60) |
+| Backend ECR repository | `203635632743.dkr.ecr.us-east-1.amazonaws.com/ict381_backend` (`image_tag_mutability = "MUTABLE"`) | `infra/terraform/main.tf` lines 263–267 (`aws_ecr_repository.backend`); output `backend_ecr_url` (`infra/terraform/output.tf` line 25); `infra/ansible/inventory.ini` line 30 |
+| MongoDB ECR repository | `203635632743.dkr.ecr.us-east-1.amazonaws.com/ict381_mongo` (`MUTABLE`) | `infra/terraform/main.tf` lines 269–273 (`aws_ecr_repository.mongo`); output `mongo_ecr_url` (`output.tf` line 29); `inventory.ini` line 31 |
+| Site S3 bucket | `ict381-eca-site-xxingyao-203635632743`, served at `http://ict381-eca-site-xxingyao-203635632743.s3-website-us-east-1.amazonaws.com` (no versioning configured) | `infra/terraform/main.tf` lines 221–222 (`awscc_s3_bucket.site`); `Jenkinsfile` line 19 (`SITE_BUCKET`) |
+| Deploy playbook | `infra/ansible/prod-application.yaml` | Plays *Deploy MongoDB to the database host* (lines 86–113, `hosts: db`) and *Deploy the backend to the application host* (lines 118–146, `hosts: app`); run by `Jenkinsfile` line 92 |
+| Image tag parameters | `-e image_tag=` / `-e mongo_image_tag=` | Defaults `image_tag: latest` (`prod-application.yaml` line 127) and `mongo_image_tag: latest` (line 95). Consumed as `{{ backend_ecr_repo }}:{{ image_tag }}` (`templates/backend-compose.yml.j2` line 15) and `{{ mongo_ecr_repo }}:{{ mongo_image_tag }}` (`templates/mongo-compose.yml.j2` line 10). Build side: `image_tag` in `build-docker.yaml` line 33 |
+
+Throughout, **vN** is the bad release and **vK** is the last stable one. Today `v3` is the only pipeline release. The stable version before it is the Q3b seed, tagged `latest` in both ECR repositories (`evidence/q3b-ecr-images.log`).
 
 ### (a) Returning each tier to a previous stable version
 
-`TODO — for both frontend and backend: what you check out, rebuild or redeploy, and which Q1–4 artifacts you rely on. Identify where a tier can be restored WITHOUT rebuilding, and explain why that is possible.`
+**Backend (and MongoDB): redeploy, no rebuild.** Every `main` build ran `build-docker.yaml -e image_tag=${RELEASE_TAG}` (`Jenkinsfile` line 88), which pushed `ict381_backend:vK` and `ict381_mongo:vK` to ECR. Those images are still there. Terraform never expires them: there is no lifecycle policy in `main.tf`, and `force_delete` only matters on destroy. So rolling back the backend is one command from the CI host, in `infra/ansible`, using the same playbook and inventory as every release:
+
+```
+ansible-playbook prod-application.yaml -e image_tag=vK -e mongo_image_tag=vN   # database tag left as it is — see (c)
+```
+
+The first play logs the hosts in to ECR through `LabInstanceProfile` (`prod-application.yaml` lines 77–81). The backend play re-renders `/opt/backend/compose.yml` with `image: …/ict381_backend:vK`. `docker_compose_v2` with `state: present` (lines 143–146) sees a changed image, pulls it and recreates only the `backend` container. Nothing is compiled, no tests run, and `pip install` doesn't run. That's why this tier can be restored **without rebuilding**: the release *is* an immutable-by-convention image in a registry, and deploying is just choosing which tag to point the compose file at.
+
+**Frontend: check out the tag, rebuild, re-sync.** The frontend has no stored release artifact. `aws s3 sync build/ s3://${SITE_BUCKET} --delete` (`Jenkinsfile` line 77) *overwrites* the bucket, and `awscc_s3_bucket.site` has no versioning. So the only copy of the vK site is its source, at git tag `vK`. To restore it, on the CI host:
+1. `git checkout vK` in the monorepo.
+2. In `frontend/`, rerun the provided build: `docker run --rm -e REACT_APP_API_URL=http://ec2-3-214-100-242.compute-1.amazonaws.com:5000 -v "$PWD:/app" -w /app node:16.20.2-alpine sh -c "npm ci && npm run build"` (`Jenkinsfile` lines 72–73).
+3. `aws s3 sync build/ s3://ict381-eca-site-xxingyao-203635632743 --delete --region us-east-1`.
+
+The rebuild is reproducible because `package-lock.json` (regenerated under Node 16 in Q4a) fixes every dependency, `npm ci` installs exactly the lock, and the builder image is pinned to `node:16.20.2-alpine`. It takes minutes, mostly `npm ci` (about 4 minutes in `main #2`), where the backend takes seconds.
+
+**Making it permanent.** After the hot rollback, `main` still holds the bad code, so the next merge would re-ship it. The durable fix goes through the gate: a revert PR of the bad merge (e.g. `git revert -m 1 <merge>`), which turns green and is merged, and then `main` tags and deploys a new `v(N+1)` whose content equals vK.
 
 ### (b) Keeping the two tiers consistent
 
-`TODO — how you ensure frontend and backend return to the same release together. What property of the way they were built and released guarantees this?`
+**One release number names both tiers.** In a single `main` build, the same `RELEASE_TAG` (`Jenkinsfile` line 24):
+- tags the commit in Git (line 60),
+- tags the backend and MongoDB images (`-e image_tag=${RELEASE_TAG}`, line 88),
+- is deployed to both hosts (`-e image_tag=${RELEASE_TAG} -e mongo_image_tag=${RELEASE_TAG}`, line 92),
+- and the S3 bundle is built from the same checked-out commit (line 73).
+
+Because Q1 put both tiers in one repository, git tag `v3` → commit `337784e` contains the exact `frontend/` and `backend/` that produced `ict381_backend:v3` and the `v3` site, and both passed the gate together on that commit. "Version vK" is therefore one consistent pair, not two numbers someone has to match up. Rolling back means choosing **one** `vK` and using it for both application tiers: `git checkout vK` for the frontend rebuild and `-e image_tag=vK` for the backend. There's no compatibility table to consult, because the tag is the compatibility record. The database is the deliberate exception: its tag is left alone during a code rollback, for the reasons in (c).
+
+**The API address never changes between releases.** The frontend bakes in `REACT_APP_API_URL=http://${APP_PUBLIC_DNS}:5000` at build time. `APP_PUBLIC_DNS = 'ec2-3-214-100-242.compute-1.amazonaws.com'` (`Jenkinsfile` line 20) comes from `aws_eip.app_eip` (`main.tf` line 211). Because the Elastic IP is fixed, an old bundle rebuilt from `vK` still calls the same host. So a rolled-back frontend reaches the rolled-back backend with no config change.
+
+**Order of the rollback.** Backend first (seconds), then frontend. Users meet an old frontend on a new backend only during the short window in between, never the other way round for long.
 
 ### (c) Database deployment handling
 
-`TODO — issues with redeploying the database on every release, plus an improvement, grounded in how DockerfileMongo / db_seed_restore.sh seed and prod-application.yaml actually behave.`
+**How it actually behaves.**
+- Every release, `build-docker.yaml` (line 63) builds and pushes a new `ict381_mongo:vN`. Each one has the seed baked in: `DockerfileMongo` runs `COPY db_seed /opt` and installs `db_seed_restore.sh` as `/docker-entrypoint-initdb.d/restore.sh`. That script runs `mongorestore --drop /opt` (`db_seed_restore.sh` line 8).
+- `prod-application.yaml` then renders `image: …/ict381_mongo:vN` (`mongo-compose.yml.j2` line 10). Because the tag changes on every release (`-e mongo_image_tag=${RELEASE_TAG}`, `Jenkinsfile` line 92), `docker_compose_v2` (lines 110–113) **stops and recreates the database container on every release**, including frontend-only ones.
+- `mongo-compose.yml.j2` declares **no volume**. The data survives a recreate only by accident: the official `mongo` image declares `VOLUME /data/db`, so Docker creates an *anonymous* volume, and Compose carries it over to the replacement container ("preserving mounted volumes"). The official image runs `/docker-entrypoint-initdb.d/` **only when `/data/db` is empty**. So the seed is restored on the very first deploy and never again.
+
+**The issues.**
+1. **The release's database image doesn't contain what it claims.** After the first deploy, the seed inside `ict381_mongo:vN` is never applied. A change to `backend/db_seed/skipq/` in a release silently never reaches production. Likewise, rolling back with `-e mongo_image_tag=vK` changes the engine binary but **not one document**, so "database rollback" only looks like one.
+2. **Production data is one command away from being reset to the seed.** The live data sits in an unnamed, un-backed-up anonymous volume. Any of these empties `/data/db`, after which the init script runs `mongorestore --drop` and every order, payment and new user (`foodOrders`, `payments`, `appUsers`) is replaced by the snapshot:
+   - `docker compose down -v` in `/opt/mongo`;
+   - `docker system prune --volumes`;
+   - an `up` with `--renew-anon-volumes`;
+   - replacing `aws_instance.db`.
+3. **The engine version is unpinned, and rollback goes downward.** `DockerfileMongo` is `FROM mongo`, i.e. `latest`, so any release can move production to a new MongoDB major version on top of the existing data files. Rolling back to an older `ict381_mongo:vK` then runs an *older* engine against data written by a newer one. MongoDB requires `featureCompatibilityVersion` to be lowered before a downgrade, so the database container can fail to start, and the "rollback" takes the site down.
+4. **Every release causes database downtime.** The backend loses its database while the container is replaced, even when nothing about the database changed.
+5. Minor: the comments in `DockerfileMongo` and `db_seed_restore.sh` still say `staycation`, while the restore actually loads `skipq`.
+
+**The improvement: separate the data's lifecycle from the code's.**
+- **Make persistence explicit:** in `mongo-compose.yml.j2`, add `volumes: [mongo-data:/data/db]` with a top-level `volumes: {mongo-data: {}}`. The data then survives any container change by design. The seed stays as a first-boot-only initialiser, which is what the init script is meant for.
+- **Deploy the database only when it changes:** stop passing `mongo_image_tag=${RELEASE_TAG}` on every build (`Jenkinsfile` line 92). Pin the engine (`FROM mongo:<major>`) and bump `mongo_image_tag` only on a deliberate database change, so a normal release or rollback never touches the database container.
+- **Changes to data go through migrations, not the seed:** ship schema or data changes as idempotent, backward-compatible migration steps run by the backend release. Then backend `vK` can still run against data that `vN` has touched.
+- **Back up before every deploy:** add a task before *Bring MongoDB up* that runs `mongodump` to S3 through the host's `LabInstanceProfile`. Then a bad release that damages data has a restore point.
+
+With these changes, a code rollback is `-e image_tag=vK` alone, and the database is never touched by one.
 
 ### (d) Why the infrastructure stays untouched
 
-`TODO — what separates "what runs" from "what it runs on", and why that separation makes rollback a fast redeploy rather than a rebuild.`
+**What it runs on** is declared once in Terraform and stored in the S3 remote state (`ict381-eca-tfstate-…`, `use_lockfile = true`):
+- `aws_instance.jenkins`, `aws_instance.app` and `aws_instance.db` (`main.tf` lines 152, 169, 186);
+- the per-tier security groups `ci_sg`, `application_sg` and `database_sg`;
+- `aws_eip.jenkins_eip` and `aws_eip.app_eip`;
+- `awscc_s3_bucket.site`;
+- the two `aws_ecr_repository` resources.
+
+None of these resources mentions a release: `main.tf` contains no image tag, no S3 object and no application version.
+
+**What runs** is entirely outside Terraform:
+- the image tags in ECR,
+- the objects in the S3 bucket,
+- and the `/opt/backend/compose.yml` and `/opt/mongo/compose.yml` files that Ansible renders from two variables, `image_tag` and `mongo_image_tag`.
+
+The hosts are addressed through fixed values: `inventory.ini` (`ip-172-31-42-96.ec2.internal`, `172.31.40.21`), the EIP DNS in `Jenkinsfile` line 20, and the `extra_hosts` entry `db:<db private IP>` in `backend-compose.yml.j2` line 19. So the network, the ports (`5000` and `27017`, opened by the security groups) and the IAM access (`LabInstanceProfile`, which lets the hosts pull from ECR without keys) all stay valid for any release.
+
+A rollback therefore changes one value in the "what runs" layer. `terraform plan` before and after would show **no changes**, so there is nothing to re-provision. The hosts are already bootstrapped (Docker, the AWS CLI and the compose plugin are installed by the first play, and Q3c showed it is idempotent), and the images are already built. What remains is a `docker pull` and a container restart for the backend, plus an S3 sync for the frontend. A rebuild would instead mean `terraform apply` for new instances and new IPs, then the Q3a bootstrap, then a new build. It would also change `APP_PUBLIC_DNS`, which would break every frontend bundle that has the old address baked in.
 
 ### (e) Detecting it sooner, recovering faster
 
-`TODO — how you would notice the failure faster, shorten recovery, or prevent recurrence.`
+**Notice sooner.** Add a **post-deploy smoke-test stage** to the `Jenkinsfile` after *Deploy backend to app host*. It would automatically do what `evidence/q4c-live-site-login.png` shows by hand:
+- `curl` the S3 website and check for the `Log In` heading;
+- `POST http://${APP_PUBLIC_DNS}:5000/api/user/gettoken` with the seed user `weiling@skipq.test` and expect `200`;
+- `GET /api/diner/stalls` (with the returned token) and expect the three seeded stalls.
+
+If it fails, the build turns red within seconds of the release. Today a broken release is noticed only when a user complains. A `healthcheck:` in `backend-compose.yml.j2` would also make `docker ps` on the app host show an unhealthy container straight away.
+
+**Catch slow-query and behaviour regressions before they ship.** The repo already contains suites the gate doesn't run: `backend/tests/playwright/test_order_lifecycle.py` (end-to-end ordering through the UI) and `backend/tests/stress/locustfile.py` (load). The paper names slow queries as a typical post-deploy failure, and a short Locust run against the `test-compose.yml` stack with a latency threshold would catch exactly that in the gate.
+
+**Recover faster.**
+- **Keep every frontend release.** Sync each build to `s3://${SITE_BUCKET}/releases/${RELEASE_TAG}/` as well, or enable versioning on `awscc_s3_bucket.site`. A frontend rollback then becomes a copy instead of a 4-minute rebuild.
+- **A parameterised `rollback` job.** It takes `ROLLBACK_TAG` and runs only `prod-application.yaml -e image_tag=${ROLLBACK_TAG}` plus the S3 restore, with no build and no tests. One click, well under a minute.
+- **Automatic rollback.** If the smoke test fails, redeploy the previous tag found with `git describe --tags --abbrev=0 ${RELEASE_TAG}^`.
+
+**Prevent recurrence.**
+- Set `image_tag_mutability = "IMMUTABLE"` on both ECR repositories (`main.tf` lines 265 and 271). A rebuilt or recreated Jenkins job that restarts `BUILD_NUMBER` at 1 could otherwise overwrite `ict381_backend:v3` and quietly change what "rolling back to v3" means.
+- Pin `FROM mongo` and the backend base image.
+- Apply the database changes from (c), so a release never takes user data with it.
+- Make the date-dependent backend test deterministic (Q4a(3)), so a red gate always means a real defect.
+
+References: [`docker compose up` — volumes are preserved when a container is recreated; `--renew-anon-volumes`](https://docs.docker.com/reference/cli/docker/compose/up/) · [Official `mongo` image — `/docker-entrypoint-initdb.d` runs only on an empty data directory](https://hub.docker.com/_/mongo) · [MongoDB — downgrade requires lowering `featureCompatibilityVersion` first](https://www.mongodb.com/docs/manual/reference/command/setFeatureCompatibilityVersion/)
 
 ---
 
@@ -619,29 +746,31 @@ No red pull request was merged at any point.
 
 > At least three distinct points. Each must be grounded in concrete cross-repository coordination friction encountered in the TMA (where frontend and backend were separate repos) and linked to a specific artifact from Questions 2–5 that demonstrates how a single repository removed that friction. Make the causal relationship clear.
 
-### Point 1 — `TODO: title`
+In the TMA, SkipQ lived in two repositories: `ict381-2026-t02-tma-backend-xxingyao` and `ict381-2026-t02-tma-frontend-xxingyao`. The commit hashes and quotes below come from their histories, mirrored at `xxingyao/skipq-backend-mirror` and `xxingyao/skipq-frontend-mirror`.
+
+### Point 1 — One feature is one commit, not a push to each repository
 
 | | |
 |---|---|
-| **TMA friction** | `TODO — the concrete coordination problem encountered` |
-| **Artifact from Q2–5** | `TODO — the specific file, log or output` |
-| **Why the restructuring eliminates it** | `TODO — the causal explanation` |
+| **TMA friction** | Every user-facing feature needed a commit in **both** repositories, pushed separately:<br>• *Dismissing notifications*: backend `7f51b64` "Mark notifications read, so the diner's banner clears" (adds `POST /api/diner/notifications/read`) and frontend `6b9a8f4` "Add Dismiss to the notification banner" (adds `dismissNotifications` to `src/api/endpoints.js`). Both were pushed at **2026-10-19 15:38**.<br>• *Menu editing and order tracking*: backend `978b792` (01:23) and frontend `875f0fb` (01:24).<br><br>The second pair shows the cost. `978b792` also had to change the backend's role guard so that `OPTIONS` requests are exempt, because the new frontend screens' cross-origin preflight requests were being refused. A change in one repo broke against the other, and it could only be found by running both by hand. The two halves were reviewed separately, and nothing stopped one being pushed without the other. |
+| **Artifact from Q2–5** | **Pull request #3**, merged as `337784e` ([`evidence/q4c-gate-merge.png`](evidence/q4c-gate-merge.png)). One PR carried 11 files across both tiers and the pipeline: `Jenkinsfile`, `backend/test-compose.yml`, `backend/docker-compose.yml`, `frontend/package.json`, `frontend/package-lock.json`, `frontend/src/Pages/SignIn.js`, `frontend/src/domain/orderActions.test.js`, plus the README and evidence. It was reviewed as one diff, gated by one check (`continuous-integration/jenkins/pr-head`), and merged as one commit. |
+| **Why the restructuring eliminates it** | The unit of change is now a **commit, and a commit is atomic across directories**. `7f51b64` + `6b9a8f4` would be one commit: the reviewer sees the endpoint and its caller in the same diff, the gate tests them together, and the merge lands both or neither. The repository can never hold the frontend half of a feature without the backend half, so there's no second push to forget and no order to get wrong. |
 
-### Point 2 — `TODO: title`
-
-| | |
-|---|---|
-| **TMA friction** | `TODO` |
-| **Artifact from Q2–5** | `TODO` |
-| **Why the restructuring eliminates it** | `TODO` |
-
-### Point 3 — `TODO: title`
+### Point 2 — One version identifies the whole system
 
 | | |
 |---|---|
-| **TMA friction** | `TODO` |
-| **Artifact from Q2–5** | `TODO` |
-| **Why the restructuring eliminates it** | `TODO` |
+| **TMA friction** | Each repository had its own history, and nothing recorded which frontend commit needed which backend commit. The dependencies were real but invisible:<br>• Frontend `6b9a8f4`'s Dismiss button calls `POST /api/diner/notifications/read`, which exists only from backend `7f51b64` onward. Pair it with an earlier backend and Dismiss gets a 404.<br>• Frontend `1bdc872` "Render the order timestamp in the viewer's local time" parses `created_at + 'Z'`, so it depends on the backend sending naive UTC. That contract lived in neither repo's version history.<br><br>The READMEs only point at each other (*"the React client lives in the frontend repository"*; *"The SkipQ backend running, with its database seeded"*), with no version. Even a cross-repo link drifted: backend `aeda1f0` added the Q7a screencast at 22:09, frontend `110f4f4` linked it at 22:29, and the link had to be fixed again in `b93f808` "Update screencast link in README" at 23:37. |
+| **Artifact from Q2–5** | **Release tag `v3`** on merge commit `337784e` ([`evidence/q4c-github-tags.png`](evidence/q4c-github-tags.png)), produced by `RELEASE_TAG = "v${BUILD_NUMBER}"` (`Jenkinsfile` line 24). In one `main` build the same value tags the Git commit (line 60), tags the images `ict381_backend:v3` and `ict381_mongo:v3` (line 88), and is deployed to both hosts (line 92). The S3 site is built from the same checkout (line 73). Q5(b) relies on exactly this to roll both tiers back together. |
+| **Why the restructuring eliminates it** | In one repository, **a single commit SHA fixes the frontend and the backend at once**. The dependency between the Dismiss button and its endpoint is no longer a fact someone has to remember: both sit in every commit from the one that added them. A tag on a commit therefore can't point at mismatched halves, so `v3` is one compatible pair by construction. A rollback (Q5(a)–(b)) chooses one tag instead of reconciling two histories. |
+
+### Point 3 — The two tiers are tested together, from the same commit
+
+| | |
+|---|---|
+| **TMA friction** | There was no place where the frontend and backend were tested as a pair:<br>• The only cross-tier test, `tests/playwright/test_order_lifecycle.py` (backend `db17d1c`), lives in the **backend** repo but drives the **frontend**. The TMA backend README says it *"Needs the backend on :5000, the frontend on :3000 and a freshly seeded database"*. `pytest.ini` deselects it by default, so it ran only when both repos were checked out and started by hand, against whatever frontend commit happened to be on disk.<br>• The frontend repo had no tests of its own at all: `26667b8` removed the lab's `src/App.test.js` and `setupTests.js`, and `774f5fa` dropped the testing libraries.<br>• Each repo also carried its own Docker and compose scaffolding (backend `Dockerfile`, `docker-compose.yml`; frontend `DockerfileReact`, `compose.yaml`).<br><br>The lab's provided `Jenkinsfile` (as imported in `f5743d6`) shows how a pipeline copes with this: three separate `git branch: 'main'` clones. That tests whatever each `main` happened to be at that moment and records nothing about which combination passed. |
+| **Artifact from Q2–5** | **The Q4 `Jenkinsfile`**: one `checkout scm` (line 30), then **Frontend tests** (line 33) and **Backend tests** (line 40) on that one commit. Q4a restored a frontend suite (`frontend/src/domain/orderActions.test.js`, with `@testing-library/*` back in `frontend/package.json`) so both tiers are gated. Both suites ran on PR #3's `ebb99d6` (red, [`q4c-gate-red.png`](evidence/q4c-gate-red.png)) and `ab9ee71` (green, [`q4c-gate-green.png`](evidence/q4c-gate-green.png)), then again on `main #3` before deploy ([`q4c-gate-deploy.png`](evidence/q4c-gate-deploy.png)). See also Q1's before/after table (3 × `git` clone → `checkout scm`). |
+| **Why the restructuring eliminates it** | The commit under test fixes the version of both sides. "Which frontend should this backend be tested against?" now has exactly one answer: the one in the same commit. A green check means *this* frontend and *this* backend passed together, and that is exactly the pair that gets tagged and deployed (Q4d(b)). It also makes the Playwright lifecycle test runnable in one job, which is the natural next stage for the gate (Q5(e)). |
 
 ---
 
@@ -651,28 +780,28 @@ All run logs and screenshots live under `evidence/`.
 
 | File | Question | Status |
 |---|---|---|
-| `q2b-apply.log` | 2b | ☐ |
-| `q2b-output.log` | 2b | ☐ |
-| `q2b-s3-site.png` | 2b | ☐ |
-| `q3a-bootstrap.log` | 3a | ☐ |
-| `q3a-verify.log` | 3a | ☐ |
-| `q3b-build-push.log` | 3b | ☐ |
-| `q3b-ecr-images.log` | 3b | ☐ |
-| `q3b-deploy.log` | 3b | ☐ |
-| `q3b-verify.log` | 3b | ☐ |
-| `q3c-idempotency.log` | 3c | ☐ |
-| `q4a-frontend.log` | 4a | ☐ |
-| `q4a-backend.log` | 4a | ☐ |
-| `q4b-local-dev-network.png` | 4b | ☐ |
-| `q4c-github-tags.png` | 4c | ☐ |
-| `q4c-live-site-login.png` | 4c | ☐ |
-| `q4c-webhook.png` | 4c | ☐ |
-| `q4c-job-config.png` | 4c | ☐ |
-| `q4c-credentials.png` | 4c | ☐ |
-| `q4c-gate-red.png` | 4c | ☐ |
-| `q4c-gate-green.png` | 4c | ☐ |
-| `q4c-gate-merge.png` | 4c | ☐ |
-| `q4c-gate-deploy.png` | 4c | ☐ |
+| `q2b-apply.log` | 2b | ☑ |
+| `q2b-output.log` | 2b | ☑ |
+| `q2b-s3-site.png` | 2b | ☑ |
+| `q3a-bootstrap.log` | 3a | ☑ |
+| `q3a-verify.log` | 3a | ☑ |
+| `q3b-build-push.log` | 3b | ☑ |
+| `q3b-ecr-images.log` | 3b | ☑ |
+| `q3b-deploy.log` | 3b | ☑ |
+| `q3b-verify.log` | 3b | ☑ |
+| `q3c-idempotency.log` | 3c | ☑ |
+| `q4a-frontend.log` | 4a | ☑ |
+| `q4a-backend.log` | 4a | ☑ |
+| `q4b-local-dev-network.png` | 4b | ☑ |
+| `q4c-github-tags.png` | 4c | ☑ |
+| `q4c-live-site-login.png` | 4c | ☑ |
+| `q4c-webhook.png` | 4c | ☑ |
+| `q4c-job-config.png` | 4c | ☑ |
+| `q4c-credentials.png` | 4c | ☑ |
+| `q4c-gate-red.png` | 4c | ☑ |
+| `q4c-gate-green.png` | 4c | ☑ |
+| `q4c-gate-merge.png` | 4c | ☑ |
+| `q4c-gate-deploy.png` | 4c | ☑ |
 
 ## Submission checklist
 
