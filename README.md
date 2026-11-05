@@ -513,48 +513,68 @@ With the guards, a feature-branch build runs the gate and stops; only a green `m
 
 ### (c) The tagged release
 
-**Screenshot:** `TODO — evidence/q4c-github-tags.png`
+**Screenshot:** [`evidence/q4c-github-tags.png`](evidence/q4c-github-tags.png)
 
-Release tag pushed: `TODO — vN`
+Release tag pushed: **`v3`**, on merge commit `337784e` ("Merge pull request #3 from ICT381/feat/q4-cicd"). Pushed by the **Tag release** stage of Jenkins build `main #3`, `RELEASE_TAG = "v${BUILD_NUMBER}"`.
 
 ### (c) The live site, logged in end to end
 
-**Screenshot:** `TODO — evidence/q4c-live-site-login.png`
+**Screenshot:** [`evidence/q4c-live-site-login.png`](evidence/q4c-live-site-login.png)
 
 Single screenshot showing all three:
-- [ ] Browser address bar with the S3 website URL
-- [ ] The "Log In" heading (the Q4 UI change — proves this is *this* pipeline's release, not the Q3b deploy)
-- [ ] Network tab: login request to `http://<application_host_public_dns>:5000/...` at **status 200**
+- [x] Browser address bar with the S3 website URL `http://ict381-eca-site-xxingyao-203635632743.s3-website-us-east-1.amazonaws.com`
+- [x] The "Log In" heading (the Q4 UI change — proves this is *this* pipeline's release, not the Q3b deploy). SkipQ's sign-in page heading was `SkipQ`; commit `ab9ee71` changed it to `Log In` in `frontend/src/Pages/SignIn.js`.
+- [x] Network tab: `POST http://ec2-3-214-100-242.compute-1.amazonaws.com:5000/api/user/gettoken` at **status 200** (`Server: gunicorn`, `Access-Control-Allow-Origin` = the S3 website origin)
 
 ### (c) Webhook
 
-**Screenshot:** `TODO — evidence/q4c-webhook.png`
+**Screenshot:** [`evidence/q4c-webhook.png`](evidence/q4c-webhook.png)
 
-Webhook at `http://<ci_host_public_address>:8080/github-webhook/`, subscribed to Pushes and Pull requests, with a 200 in Recent Deliveries.
+Webhook at `http://52.54.76.84:8080/github-webhook/`, content type `application/json`, subscribed to **Pushes** and **Pull requests**. Recent Deliveries shows the `push` delivery of `feat/q4-cicd` at 16:34:42 with **Response 200**, which started Jenkins build `feat/q4-cicd #1`.
 
 ### (c) The pipeline stood up
 
 | Screenshot | Shows |
 |---|---|
-| `TODO — evidence/q4c-job-config.png` | Multibranch job configuration |
-| `TODO — evidence/q4c-credentials.png` | `github-ssh-key` and the fine-grained GitHub token |
+| [`evidence/q4c-job-config.png`](evidence/q4c-job-config.png) | Multibranch job `ict381-eca`: GitHub branch source `https://github.com/ICT381/ict381-2026-t02-eca-xxingyao.git` with the fine-grained token; behaviours *Discover branches* (exclude branches also filed as PRs), *Discover pull requests from origin* (current PR revision), *Checkout over SSH* (`github-ssh-key`); build by `Jenkinsfile` |
+| [`evidence/q4c-credentials.png`](evidence/q4c-credentials.png) | `github-ssh-key` (SSH username with private key, user `git`, GitHub deploy key with write access) and `github-token` (fine-grained GitHub token) |
+
+The `jenkins` user's `known_hosts` holds GitHub's host keys (`ssh-keyscan github.com`), so checkout and the tag push verify the host key.
+
+The GitHub Classroom *Feedback* pull request (#1, head `main`) was closed while the pipeline ran. With *Exclude branches that are also filed as PRs*, an open PR whose head is `main` hides `main` from branch discovery, so `main` would never build or deploy. It was reopened afterwards.
 
 ### (c) The gate is causal — red → green → merge → deploy
 
 | Step | Evidence | Screenshot |
 |---|---|---|
-| 1. Push with failing test → red build, PR ✗ | `TODO` | `TODO` |
-| 2. Fix in a second commit → green, PR ✓ | `TODO` | `TODO` |
-| 3. Merge after the green check | `TODO` | `TODO` |
-| 4. Gate re-runs on `main`, then deploy stages run | `TODO` | `TODO` |
+| 1. Push with failing test → red build, PR ✗ | `feat/q4-cicd` pushed with the Q4a test still expecting `'Refunded'`. Jenkins `feat/q4-cicd #1` and the PR build for PR #3 fail at **Frontend tests** (`Expected: "Refunded"`, `Received: "Refund"`, 1 failed / 3 passed); Backend tests, Tag release and both Deploy stages are skipped. PR #3 shows `continuous-integration/jenkins/pr-head` ✗. | [`q4c-gate-red.png`](evidence/q4c-gate-red.png) |
+| 2. Fix in a second commit → green, PR ✓ | Commit `ab9ee71` changes the assertion to `'Refund'` (and the heading to `Log In`). The PR build re-runs both suites: `pr-head` ✓ "This commit looks good". | [`q4c-gate-green.png`](evidence/q4c-gate-green.png) |
+| 3. Merge after the green check | PR #3 merged as `337784e` only after the ✓; the commit list shows `ebb99d6` ✗ then `ab9ee71` ✓. | [`q4c-gate-merge.png`](evidence/q4c-gate-merge.png) |
+| 4. Gate re-runs on `main`, then deploy stages run | `main #3`: Checkout → Frontend tests → Backend tests → Tag release (`v3`) → Deploy frontend to S3 → Deploy backend to app host, all green (4 min 35 s). | [`q4c-gate-deploy.png`](evidence/q4c-gate-deploy.png) |
 
 No red pull request was merged at any point.
+
+`main #2`, the first build of the merge commit, failed at **Backend tests** with `Conflict. The container name "/backend-db-1" is already in use`. When PR #3 closed, `feat/q4-cicd` became a plain branch again and built at the same moment. Both builds ran `test-compose.yml` from a directory named `backend`, so they shared the Compose project name and container names. The gate still held: Tag release and both Deploy stages were skipped. `main #3` re-ran the same commit with no concurrent build and passed. (See Q4d.)
 
 ### (c) Why the SSH-tunnelled Jenkins access is secure
 
 > You reach the Jenkins UI over an SSH tunnel instead of opening port 8080 to the internet. What makes this access path secure — what protects it, and which attack surface does it remove?
 
-`TODO`
+**What protects it.** The UI is reached with `ssh -i labsuser.pem -L 8080:localhost:8080 ubuntu@52.54.76.84`, then `http://localhost:8080`.
+- **Authentication:** the SSH server on the CI host accepts only the `vockey` key pair. Only the holder of the private key can open the tunnel. A password guess or a scan of port 22 gets nothing.
+- **Encryption and integrity:** Jenkins itself serves plain HTTP. Inside the tunnel, the Jenkins admin password, the session cookie and every page (credential IDs, build logs) travel encrypted, so nobody on the path can read or alter them.
+- **Host verification:** SSH checks the CI host's host key, so a man-in-the-middle cannot pose as the CI host.
+
+**What attack surface it removes.** In `ci_sg`, port 8080 is open only to GitHub's published webhook ranges (`192.30.252.0/22`, `185.199.108.0/22`, `140.82.112.0/20`, `143.55.64.0/20`, …), not to `0.0.0.0/0`. So the Jenkins login page, the script console and the Jenkins CLI endpoint cannot be reached from the internet. That rules out:
+- password brute-forcing of the admin account;
+- unauthenticated exploits against Jenkins itself, e.g. CVE-2024-23897, where the built-in CLI let unauthenticated attackers read arbitrary files on the controller (Jenkins Security Advisory 2024-01-24);
+- sniffing the admin session over unencrypted HTTP.
+
+This matters because the CI host is the most privileged machine in the system. It holds the GitHub deploy key with **write** access (it pushes release tags), its instance profile can push to ECR and overwrite the S3 site, and it can SSH into the app and DB hosts. A compromised Jenkins means a compromised production.
+
+**What remains.** Port 22 is still open to `0.0.0.0/0` (Learner Lab IPs change between sessions), so it relies on key-only authentication. It could be tightened to the operator's own IP, or replaced with AWS Systems Manager Session Manager port forwarding so no inbound port is needed at all.
+
+References: [Jenkins Security Advisory 2024-01-24 (CVE-2024-23897)](https://www.jenkins.io/security/advisory/2024-01-24/) · [GitHub meta API — webhook IP ranges](https://api.github.com/meta) · [OpenSSH `ssh -L` local forwarding](https://man.openbsd.org/ssh#L)
 
 ## Question 4d — Reflection
 
@@ -651,28 +671,28 @@ All run logs and screenshots live under `evidence/`.
 
 | File | Question | Status |
 |---|---|---|
-| `q2b-apply.log` | 2b | ☐ |
-| `q2b-output.log` | 2b | ☐ |
-| `q2b-s3-site.png` | 2b | ☐ |
-| `q3a-bootstrap.log` | 3a | ☐ |
-| `q3a-verify.log` | 3a | ☐ |
-| `q3b-build-push.log` | 3b | ☐ |
-| `q3b-ecr-images.log` | 3b | ☐ |
-| `q3b-deploy.log` | 3b | ☐ |
-| `q3b-verify.log` | 3b | ☐ |
-| `q3c-idempotency.log` | 3c | ☐ |
-| `q4a-frontend.log` | 4a | ☐ |
-| `q4a-backend.log` | 4a | ☐ |
-| `q4b-local-dev-network.png` | 4b | ☐ |
-| `q4c-github-tags.png` | 4c | ☐ |
-| `q4c-live-site-login.png` | 4c | ☐ |
-| `q4c-webhook.png` | 4c | ☐ |
-| `q4c-job-config.png` | 4c | ☐ |
-| `q4c-credentials.png` | 4c | ☐ |
-| `q4c-gate-red.png` | 4c | ☐ |
-| `q4c-gate-green.png` | 4c | ☐ |
-| `q4c-gate-merge.png` | 4c | ☐ |
-| `q4c-gate-deploy.png` | 4c | ☐ |
+| `q2b-apply.log` | 2b | ☑ |
+| `q2b-output.log` | 2b | ☑ |
+| `q2b-s3-site.png` | 2b | ☑ |
+| `q3a-bootstrap.log` | 3a | ☑ |
+| `q3a-verify.log` | 3a | ☑ |
+| `q3b-build-push.log` | 3b | ☑ |
+| `q3b-ecr-images.log` | 3b | ☑ |
+| `q3b-deploy.log` | 3b | ☑ |
+| `q3b-verify.log` | 3b | ☑ |
+| `q3c-idempotency.log` | 3c | ☑ |
+| `q4a-frontend.log` | 4a | ☑ |
+| `q4a-backend.log` | 4a | ☑ |
+| `q4b-local-dev-network.png` | 4b | ☑ |
+| `q4c-github-tags.png` | 4c | ☑ |
+| `q4c-live-site-login.png` | 4c | ☑ |
+| `q4c-webhook.png` | 4c | ☑ |
+| `q4c-job-config.png` | 4c | ☑ |
+| `q4c-credentials.png` | 4c | ☑ |
+| `q4c-gate-red.png` | 4c | ☑ |
+| `q4c-gate-green.png` | 4c | ☑ |
+| `q4c-gate-merge.png` | 4c | ☑ |
+| `q4c-gate-deploy.png` | 4c | ☑ |
 
 ## Submission checklist
 
