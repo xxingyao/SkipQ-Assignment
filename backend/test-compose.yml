@@ -1,0 +1,45 @@
+# ============================================================================
+#  test-compose.yml — Question 4(a) SCAFFOLD: the backend test harness.
+#  Two services on one network — a seeded MongoDB and a pytest run against it.
+# ============================================================================
+# YOU FILL: replace each REPLACE_WITH_... below, guided by the inline hints
+#           (search the file for `REPLACE_WITH` to find every blank; `docker compose`
+#           errors until all are replaced). Then, from the backend root, run:
+#   docker compose -f test-compose.yml up --build --abort-on-container-exit --exit-code-from test
+#   docker compose -f test-compose.yml down -v
+#
+# PROVIDED (do not write): DockerfileMongo and db_seed_restore.sh in this backend
+# folder seed the `staycation` data into Mongo on first start — before it accepts
+# connections — so the tests have data to assert on.
+
+services:
+
+  # -- MongoDB --------------------------------------------------------------
+  # The backend connects to a host literally named `db` (app/__init__.py, outside
+  # FLASK_ENV=development). NAME THIS SERVICE so the `test` container reaches Mongo
+  # at that exact name — no code change, no FLASK_ENV needed.
+  db:
+    build:
+      context: .
+      dockerfile: DockerfileMongo   # the provided seeded-Mongo Dockerfile
+    healthcheck:                                         # PROVIDED — proves Mongo is accepting connections
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # -- pytest run -----------------------------------------------------------
+  # A throwaway container that installs the backend deps and runs both suites.
+  test:
+    image: python:3.12                     # a Python 3.12 image
+    working_dir: /skipq  # run from the backend root so tests/unit,
+                                                         #   tests/functional and the `app` package resolve
+    volumes:
+      - .:/skipq                     # mount the backend source at that working_dir
+                                                         #   (host path : container path, e.g. .:/staycation)
+    depends_on:
+      db:                   # the Mongo service above
+        condition: service_healthy                       # PROVIDED — wait until the healthcheck passes
+    # Install the backend requirements (pip install -r requirements.txt), then run
+    # BOTH suites with pytest: python -m pytest -vv tests/unit tests/functional
+    command: sh -c "pip install -r requirements.txt && MONGODB_HOST=db python -m pytest -vv tests/unit tests/functional"

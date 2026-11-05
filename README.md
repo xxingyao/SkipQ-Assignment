@@ -392,33 +392,46 @@ If the deploy tore everything down and rebuilt it every time, each merge would r
 
 ### (a)(i) Completed test harness
 
-**File:** `backend/test-compose.yml` — every `REPLACE_WITH_...` placeholder resolved.
+**File:** [`backend/test-compose.yml`](backend/test-compose.yml) — every `REPLACE_WITH_...` placeholder resolved.
 
 | Service | Purpose | Key configuration |
 |---|---|---|
-| `TODO` (db) | Seeded MongoDB from `DockerfileMongo` | Service name matches the Mongo host `create_app()` uses by default |
-| `test` | `python:3.12`, backend source mounted | Runs `pip install -r requirements.txt && python -m pytest -vv tests/unit tests/functional` |
+| `db` | Seeded MongoDB built from `DockerfileMongo` | Named `db`, the host name the test container is pointed at; the provided healthcheck holds the tests until Mongo answers `ping` |
+| `test` | `python:3.12`, backend source mounted at `/skipq` (`working_dir: /skipq`, volume `.:/skipq`) | Runs `sh -c "pip install -r requirements.txt && MONGODB_HOST=db python -m pytest -vv tests/unit tests/functional"`; `depends_on: db` with `condition: service_healthy` |
+
+**Adapted for SkipQ.** StaycationX hard-codes the Mongo host `db`. My backend reads it from `MONGODB_HOST` in `app/config.py` (default `127.0.0.1`), so the test command sets `MONGODB_HOST=db` inline — no extra keys added to the scaffold and no code change.
+
+**Frontend changes needed for the suite to run** (on this branch):
+
+- [`frontend/src/domain/orderActions.test.js`](frontend/src/domain/orderActions.test.js) — new. My TMA frontend had no tests, and `CI=true npm test` exits with "No tests found". It tests `actionsFor()` and includes one deliberately failing test (as the paper asks for the TMA option), fixed in part (c).
+- [`frontend/package.json`](frontend/package.json) / [`frontend/package-lock.json`](frontend/package-lock.json) — `npm ci` refused to install because the lock file was out of sync (it listed the three `@testing-library` packages that `package.json` did not, and pinned `typescript@7.0.2`, which `react-scripts` 5's optional peer range does not accept). I restored the three packages, pinned `typescript` to `4.9.5`, and regenerated the lock file inside `node:16.20.2-alpine`, the same Node the gate uses.
 
 ### (a)(ii) Both suites run
 
-| Log | Suite |
-|---|---|
-| [`evidence/q4a-frontend.log`](evidence/q4a-frontend.log) | React suite in `node:16.20.2-alpine` |
-| [`evidence/q4a-backend.log`](evidence/q4a-backend.log) | `tests/unit` + `tests/functional` against seeded Mongo |
+| Log | Suite | Result |
+|---|---|---|
+| [`evidence/q4a-frontend.log`](evidence/q4a-frontend.log) | React suite in `node:16.20.2-alpine` (`npm ci && CI=true npm test`) | `Tests: 1 failed, 3 passed, 4 total` — the failure is the deliberate one |
+| [`evidence/q4a-backend.log`](evidence/q4a-backend.log) | `tests/unit` + `tests/functional` against the seeded Mongo (`docker compose -f test-compose.yml up --build --abort-on-container-exit --exit-code-from test`) | `1 failed, 94 passed`, `test-1 exited with code 1` — see Question 3 below |
 
-A failing test here is expected and intentional — the red → green transition is demonstrated in part (c).
+Both suites ran to completion and reported red, which is expected here; the red → green transition is demonstrated in part (c).
 
 ### (a) Question 1 — Why does the backend test run need a MongoDB at all?
 
-`TODO`
+My backend has no in-memory or mocked data layer: every endpoint reads and writes through MongoEngine models stored in MongoDB (`appUsers`, `foodItems`, `foodOrders`, `payments`, `notifications`, `tokens`). The functional suite (`tests/functional/test_api.py`) calls those endpoints through Flask's test client — logging in with `/api/user/gettoken`, placing and moving orders, reading the vendor dashboard — so each test needs a real database to read the accounts and orders from and to write the results back to. Without one, MongoEngine's connection times out after `MONGODB_TIMEOUT_MS` (2 s) and every functional test errors.
 
-### (a) Question 2 — Why does the test gate need the database seeded with the staycation data?
+The unit suite (`tests/unit/test_order_rules.py`) checks the order-status rules with `unittest.mock.Mock` objects and does not touch the database; the MongoDB is there for the functional tests, which cover the paths the browser actually uses.
 
-`TODO`
+### (a) Question 2 — Why does the test gate need the database seeded with the SkipQ data?
+
+The functional tests assert exact values from known data, not just that an endpoint answers. For example, `test_the_dashboard_excludes_refunded_and_rejected_takings` expects `order_count == 8` and `total_takings == 62.5` for one stall, and the `auth` fixture logs in with seeded accounts such as `weiling@skipq.test` / `Password1!`. On an empty database the logins would return `401` and every count would be zero, so the tests could not tell a correct backend from a broken one.
+
+In my build both seeds come from the same source, `db_seed/seed.py`: the `db` image restores a `mongodump` of it into the `skipq` database on first start (the provided `DockerfileMongo` / `db_seed_restore.sh`), and the `seeded` fixture in `tests/conftest.py` runs `seed()` into the separate `skipq_test` database before the tests and drops it afterwards. So the tests always start from the same known state, and a test run can never alter the data the deployed app is built from.
 
 ### (a) Question 3 — One improvement to the backend testing in this gate
 
-`TODO — ground it in this build, not generic testing advice.`
+**Make the date-dependent tests independent of the time they run.** The one backend failure in [`q4a-backend.log`](evidence/q4a-backend.log) is `test_the_dashboard_excludes_refunded_and_rejected_takings` (`assert 7 == 8`). It is not a code fault: the vendor dashboard counts only orders created *today* in UTC (`app/models/order.py`, the day range built from `datetime.utcnow().date()`), while `db_seed/seed.py` creates orders up to 300 minutes old. I ran the suite at 04:26 UTC, so the 300-minute-old order was dated the previous UTC day and dropped out of the count. The test therefore fails every day between 00:00 and 05:00 UTC (08:00–13:00 Singapore time) and passes otherwise.
+
+In a gate that decides whether a release ships, a test that fails by the clock blocks good merges for five hours a day and teaches people to re-run until green, which hides real failures. The fix is to make time an input rather than a side effect: let the dashboard accept the day it reports on (the model's day-range helper already takes an optional `day`), or have the seed place its orders relative to the start of the current UTC day instead of "minutes ago". Either way the expected `order_count` is the same whenever the gate runs.
 
 ## Question 4b — Build the release pipeline
 
