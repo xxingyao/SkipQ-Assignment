@@ -439,38 +439,45 @@ In a gate that decides whether a release ships, a test that fails by the clock b
 
 ### (b) The completed pipeline file
 
-**File:** `Jenkinsfile` — every `REPLACE_WITH_` filled.
+**File:** [`Jenkinsfile`](Jenkinsfile) — every `REPLACE_WITH_` filled.
 
 | Blank | What it achieves | Value used |
 |---|---|---|
-| `SITE_BUCKET` | Q2 output — S3 sync target | `TODO` |
-| `APP_PUBLIC_DNS` | Q2 output — frontend API base | `TODO` |
-| Tag release | `git tag ${RELEASE_TAG}` + push, wrapped in `sshagent(['github-ssh-key'])` | `TODO` |
-| Deploy frontend to S3 | `aws s3 sync … --delete --region ${AWS_REGION}` | `TODO` |
-| Deploy backend | Build + push `:vN` to ECR, then Ansible with `-e image_tag=${RELEASE_TAG} -e mongo_image_tag=${RELEASE_TAG}` | `TODO` |
-| `main`-only guards | `when { branch 'main' }` on the three deploy stages | `TODO` |
+| `SITE_BUCKET` (line 19) | Q2 output — S3 sync target | `ict381-eca-site-xxingyao-203635632743` |
+| `APP_PUBLIC_DNS` (line 20) | Q2 output — frontend API base | `ec2-3-214-100-242.compute-1.amazonaws.com` |
+| Tag release (lines 59–60) | Tags the merged commit with the machine-generated `RELEASE_TAG` (`v${BUILD_NUMBER}`) and pushes the tag, using the SSH push credential | `sshagent(['github-ssh-key'])` around `git tag ${RELEASE_TAG} && git push origin ${RELEASE_TAG}` |
+| Deploy frontend to S3 (line 77) | Publishes the build to the public website bucket through the CI host's instance profile, removing files no longer in the build | `aws s3 sync build/ s3://${SITE_BUCKET} --delete --region ${AWS_REGION}` |
+| Deploy backend (lines 88, 92) | Builds and pushes the immutable `:vN` images to ECR with the Q3(b) playbook, then deploys that same tag to both hosts with the Q3(b) deploy playbook | `ansible-playbook build-docker.yaml -e backend_repo=…/ict381_backend -e mongo_repo=…/ict381_mongo -e image_tag=${RELEASE_TAG}`, then `ansible-playbook prod-application.yaml -e image_tag=${RELEASE_TAG} -e mongo_image_tag=${RELEASE_TAG}` |
+| `main`-only guards (lines 55, 66, 83) | Run the three deploy stages only on the `main` build | `when { branch 'main' }` on Tag release, Deploy frontend to S3 and Deploy backend to app host |
 
 ### (b) The frontend API base
 
-`REACT_APP_API_URL` change applied across five files:
+**Adapted for SkipQ.** The five StaycationX files (`form.js`, `show.js`, `manage.js`, `explore.js`, `book.js`) do not exist in my TMA frontend. Every SkipQ page sends its requests through `src/api/endpoints.js`, which calls one module, [`frontend/src/api/client.js`](frontend/src/api/client.js). That module already reads the API base from the build-time variable (line 3):
 
-- [ ] `frontend/src/Components/Form/form.js`
-- [ ] `frontend/src/Pages/show.js`
-- [ ] `frontend/src/Pages/manage.js`
-- [ ] `frontend/src/Pages/explore.js`
-- [ ] `frontend/src/Pages/book.js`
+```javascript
+const BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:5000';
+```
+
+So the change the paper asks for — replace the `window.location.hostname` base with `process.env.REACT_APP_API_URL` — is already in place, in one file instead of five, and needed no edit.
 
 ### (b) Local development still works
 
-**Screenshot:** `TODO — evidence/q4b-local-dev-network.png`
+**Screenshot:** [`evidence/q4b-local-dev-network.png`](evidence/q4b-local-dev-network.png)
 
-Shows `npm start` on :3000 loading data from the local `docker compose` backend on `localhost:5000`.
+![npm start on :3000 calling the local backend on 127.0.0.1:5000](evidence/q4b-local-dev-network.png)
+
+`npm start` on `localhost:3000` signing in through `POST http://127.0.0.1:5000/api/user/gettoken` (`200 OK`), then loading `stalls`, from the local `docker compose` backend. The backend's CORS response (`Access-Control-Allow-Origin: http://localhost:3000`) allows the cross-origin call. My backend had no compose file, so I added [`backend/docker-compose.yml`](backend/docker-compose.yml): the API built from `backend/Dockerfile` and published on `5000`, plus the seeded MongoDB from `DockerfileMongo`.
 
 ### (b) Write-up 1 — The local-development fix
 
 > The replacement line works for the deployed build but breaks local development. Modify the change so local dev still works while still using the injected value for the deployed build, and explain the approach.
 
-`TODO — state the approach and why it works for both cases.`
+**Approach: an injected value with a local fallback.** `client.js` uses `process.env.REACT_APP_API_URL || 'http://127.0.0.1:5000'`.
+
+- **Deployed build.** The pipeline's `Deploy frontend to S3` stage runs `npm run build` with `-e REACT_APP_API_URL=http://${APP_PUBLIC_DNS}:5000`. `react-scripts` replaces `process.env.REACT_APP_API_URL` with that string when it builds the bundle, so the site served from S3 calls the application host.
+- **Local development.** `npm start` runs without the variable, so the expression is `undefined || 'http://127.0.0.1:5000'` and the dev server on `:3000` calls the backend that `docker compose up` publishes on `:5000`.
+
+The bare replacement line breaks local development because, with nothing injected, the URL becomes `undefined` and every request fails. The fallback keeps one code path for both cases with no branching on environment, and a developer can still point at another backend by setting the variable in `frontend/.env` (the template is in `frontend/.env.example`). Because every page uses `client.js`, the rule lives in one place.
 
 ### (b) Write-up 2 — The frontend build command explained
 
@@ -481,17 +488,24 @@ docker run --rm -e REACT_APP_API_URL=http://${APP_PUBLIC_DNS}:5000 \
 
 | Part | What it does | Why |
 |---|---|---|
-| `docker run --rm` | `TODO` | `TODO` |
-| `-e REACT_APP_API_URL=…` | `TODO` | `TODO` |
-| `-v "$PWD:/app"` | `TODO` | `TODO` |
-| `-w /app` | `TODO` | `TODO` |
-| `node:16.20.2-alpine` | `TODO` | `TODO` |
-| `npm ci` | `TODO` | `TODO` |
-| `npm run build` | `TODO` | `TODO` |
+| `docker run --rm` | Runs the build in a new container and deletes the container when it exits | The CI host has no Node installed (Q3(a) installs Docker, Ansible, the AWS CLI and Jenkins, but not Node), and a throwaway container leaves nothing behind between builds |
+| `-e REACT_APP_API_URL=…` | Sets the API base inside the container to the application host's public DNS on port 5000 | `react-scripts` bakes `REACT_APP_*` variables into the JavaScript at build time; a static site on S3 has no server to read them at run time, so the value must be set here. `APP_PUBLIC_DNS` is the Elastic IP's DNS from Q2, so it stays valid across restarts |
+| `-v "$PWD:/app"` | Mounts the Jenkins workspace's `frontend/` folder into the container at `/app` | The build writes `build/` back to the host, where the next step (`aws s3 sync build/ …`) uploads it with the CI host's instance profile |
+| `-w /app` | Starts the command in `/app` | That is where `package.json` and `package-lock.json` are, so `npm` finds the project |
+| `node:16.20.2-alpine` | A pinned Node 16 image | The same image as the frontend test stage, so the code is built with exactly the Node it was tested on. My lock file was regenerated under this Node (Q4a) so `npm ci` succeeds here; `alpine` keeps the image small |
+| `npm ci` | Clean-installs exactly the versions in `package-lock.json` | Every build gets the same dependency tree, and the step fails instead of silently drifting if `package.json` and the lock file disagree |
+| `npm run build` | Runs `react-scripts build`, producing an optimised static site in `build/` | This is the folder the S3 sync publishes, with the API base already inlined |
 
 ### (b) Write-up 3 — Why the `main`-only guard is on the deploy stages only
 
-`TODO — why Checkout and the two test stages are deliberately unguarded.`
+`Checkout`, `Frontend tests` and `Backend tests` are deliberately unguarded because they are the gate, and the gate has to run on every branch. A push to `feat/q4-cicd` must check out the code and run both suites so Jenkins can post the ✓/✗ check on the pull request — that check is what tells me whether the PR may be merged. Guarding the tests would mean feature branches reported nothing, and untested code could reach `main`.
+
+The three deploy stages change shared, live state, so they must run only for the reviewed, merged code on `main`:
+
+- **Tag release** writes a permanent tag to GitHub. A Multibranch job numbers builds separately per branch, so without the guard a feature branch's build #1 and `main`'s build #1 would both try to push `v1`, and a release tag could point at unmerged work.
+- **Deploy frontend to S3** overwrites the public site (`--delete` even removes files), and **Deploy backend to app host** replaces the containers users are hitting. Running either from a feature branch would ship work-in-progress code to production before review.
+
+With the guards, a feature-branch build runs the gate and stops; only a green `main` build tags and deploys.
 
 ## Question 4c — Activate and run the pipeline
 

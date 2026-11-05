@@ -1,0 +1,12 @@
+# Local development: the backend on :5000 and a seeded MongoDB.
+services:
+  db:
+    build:
+      context: .
+      dockerfile: DockerfileMongo
+  backend:
+    build: .
+    ports:
+      - "5000:5000"
+    depends_on:
+      - db
