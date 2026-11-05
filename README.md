@@ -392,33 +392,46 @@ If the deploy tore everything down and rebuilt it every time, each merge would r
 
 ### (a)(i) Completed test harness
 
-**File:** `backend/test-compose.yml` — every `REPLACE_WITH_...` placeholder resolved.
+**File:** [`backend/test-compose.yml`](backend/test-compose.yml) — every `REPLACE_WITH_...` placeholder resolved.
 
 | Service | Purpose | Key configuration |
 |---|---|---|
-| `TODO` (db) | Seeded MongoDB from `DockerfileMongo` | Service name matches the Mongo host `create_app()` uses by default |
-| `test` | `python:3.12`, backend source mounted | Runs `pip install -r requirements.txt && python -m pytest -vv tests/unit tests/functional` |
+| `db` | Seeded MongoDB built from `DockerfileMongo` | Named `db`, the host name the test container is pointed at; the provided healthcheck holds the tests until Mongo answers `ping` |
+| `test` | `python:3.12`, backend source mounted at `/skipq` (`working_dir: /skipq`, volume `.:/skipq`) | Runs `sh -c "pip install -r requirements.txt && MONGODB_HOST=db python -m pytest -vv tests/unit tests/functional"`; `depends_on: db` with `condition: service_healthy` |
+
+**Adapted for SkipQ.** StaycationX hard-codes the Mongo host `db`. My backend reads it from `MONGODB_HOST` in `app/config.py` (default `127.0.0.1`), so the test command sets `MONGODB_HOST=db` inline — no extra keys added to the scaffold and no code change.
+
+**Frontend changes needed for the suite to run** (on this branch):
+
+- [`frontend/src/domain/orderActions.test.js`](frontend/src/domain/orderActions.test.js) — new. My TMA frontend had no tests, and `CI=true npm test` exits with "No tests found". It tests `actionsFor()` and includes one deliberately failing test (as the paper asks for the TMA option), fixed in part (c).
+- [`frontend/package.json`](frontend/package.json) / [`frontend/package-lock.json`](frontend/package-lock.json) — `npm ci` refused to install because the lock file was out of sync (it listed the three `@testing-library` packages that `package.json` did not, and pinned `typescript@7.0.2`, which `react-scripts` 5's optional peer range does not accept). I restored the three packages, pinned `typescript` to `4.9.5`, and regenerated the lock file inside `node:16.20.2-alpine`, the same Node the gate uses.
 
 ### (a)(ii) Both suites run
 
-| Log | Suite |
-|---|---|
-| [`evidence/q4a-frontend.log`](evidence/q4a-frontend.log) | React suite in `node:16.20.2-alpine` |
-| [`evidence/q4a-backend.log`](evidence/q4a-backend.log) | `tests/unit` + `tests/functional` against seeded Mongo |
+| Log | Suite | Result |
+|---|---|---|
+| [`evidence/q4a-frontend.log`](evidence/q4a-frontend.log) | React suite in `node:16.20.2-alpine` (`npm ci && CI=true npm test`) | `Tests: 1 failed, 3 passed, 4 total` — the failure is the deliberate one |
+| [`evidence/q4a-backend.log`](evidence/q4a-backend.log) | `tests/unit` + `tests/functional` against the seeded Mongo (`docker compose -f test-compose.yml up --build --abort-on-container-exit --exit-code-from test`) | `1 failed, 94 passed`, `test-1 exited with code 1` — see Question 3 below |
 
-A failing test here is expected and intentional — the red → green transition is demonstrated in part (c).
+Both suites ran to completion and reported red, which is expected here; the red → green transition is demonstrated in part (c).
 
 ### (a) Question 1 — Why does the backend test run need a MongoDB at all?
 
-`TODO`
+My backend has no in-memory or mocked data layer: every endpoint reads and writes through MongoEngine models stored in MongoDB (`appUsers`, `foodItems`, `foodOrders`, `payments`, `notifications`, `tokens`). The functional suite (`tests/functional/test_api.py`) calls those endpoints through Flask's test client — logging in with `/api/user/gettoken`, placing and moving orders, reading the vendor dashboard — so each test needs a real database to read the accounts and orders from and to write the results back to. Without one, MongoEngine's connection times out after `MONGODB_TIMEOUT_MS` (2 s) and every functional test errors.
 
-### (a) Question 2 — Why does the test gate need the database seeded with the staycation data?
+The unit suite (`tests/unit/test_order_rules.py`) checks the order-status rules with `unittest.mock.Mock` objects and does not touch the database; the MongoDB is there for the functional tests, which cover the paths the browser actually uses.
 
-`TODO`
+### (a) Question 2 — Why does the test gate need the database seeded with the SkipQ data?
+
+The functional tests assert exact values from known data, not just that an endpoint answers. For example, `test_the_dashboard_excludes_refunded_and_rejected_takings` expects `order_count == 8` and `total_takings == 62.5` for one stall, and the `auth` fixture logs in with seeded accounts such as `weiling@skipq.test` / `Password1!`. On an empty database the logins would return `401` and every count would be zero, so the tests could not tell a correct backend from a broken one.
+
+In my build both seeds come from the same source, `db_seed/seed.py`: the `db` image restores a `mongodump` of it into the `skipq` database on first start (the provided `DockerfileMongo` / `db_seed_restore.sh`), and the `seeded` fixture in `tests/conftest.py` runs `seed()` into the separate `skipq_test` database before the tests and drops it afterwards. So the tests always start from the same known state, and a test run can never alter the data the deployed app is built from.
 
 ### (a) Question 3 — One improvement to the backend testing in this gate
 
-`TODO — ground it in this build, not generic testing advice.`
+**Make the date-dependent tests independent of the time they run.** The one backend failure in [`q4a-backend.log`](evidence/q4a-backend.log) is `test_the_dashboard_excludes_refunded_and_rejected_takings` (`assert 7 == 8`). It is not a code fault: the vendor dashboard counts only orders created *today* in UTC (`app/models/order.py`, the day range built from `datetime.utcnow().date()`), while `db_seed/seed.py` creates orders up to 300 minutes old. I ran the suite at 04:26 UTC, so the 300-minute-old order was dated the previous UTC day and dropped out of the count. The test therefore fails every day between 00:00 and 05:00 UTC (08:00–13:00 Singapore time) and passes otherwise.
+
+In a gate that decides whether a release ships, a test that fails by the clock blocks good merges for five hours a day and teaches people to re-run until green, which hides real failures. The fix is to make time an input rather than a side effect: let the dashboard accept the day it reports on (the model's day-range helper already takes an optional `day`), or have the seed place its orders relative to the start of the current UTC day instead of "minutes ago". Either way the expected `order_count` is the same whenever the gate runs.
 
 ## Question 4b — Build the release pipeline
 
@@ -426,38 +439,45 @@ A failing test here is expected and intentional — the red → green transition
 
 ### (b) The completed pipeline file
 
-**File:** `Jenkinsfile` — every `REPLACE_WITH_` filled.
+**File:** [`Jenkinsfile`](Jenkinsfile) — every `REPLACE_WITH_` filled.
 
 | Blank | What it achieves | Value used |
 |---|---|---|
-| `SITE_BUCKET` | Q2 output — S3 sync target | `TODO` |
-| `APP_PUBLIC_DNS` | Q2 output — frontend API base | `TODO` |
-| Tag release | `git tag ${RELEASE_TAG}` + push, wrapped in `sshagent(['github-ssh-key'])` | `TODO` |
-| Deploy frontend to S3 | `aws s3 sync … --delete --region ${AWS_REGION}` | `TODO` |
-| Deploy backend | Build + push `:vN` to ECR, then Ansible with `-e image_tag=${RELEASE_TAG} -e mongo_image_tag=${RELEASE_TAG}` | `TODO` |
-| `main`-only guards | `when { branch 'main' }` on the three deploy stages | `TODO` |
+| `SITE_BUCKET` (line 19) | Q2 output — S3 sync target | `ict381-eca-site-xxingyao-203635632743` |
+| `APP_PUBLIC_DNS` (line 20) | Q2 output — frontend API base | `ec2-3-214-100-242.compute-1.amazonaws.com` |
+| Tag release (lines 59–60) | Tags the merged commit with the machine-generated `RELEASE_TAG` (`v${BUILD_NUMBER}`) and pushes the tag, using the SSH push credential | `sshagent(['github-ssh-key'])` around `git tag ${RELEASE_TAG} && git push origin ${RELEASE_TAG}` |
+| Deploy frontend to S3 (line 77) | Publishes the build to the public website bucket through the CI host's instance profile, removing files no longer in the build | `aws s3 sync build/ s3://${SITE_BUCKET} --delete --region ${AWS_REGION}` |
+| Deploy backend (lines 88, 92) | Builds and pushes the immutable `:vN` images to ECR with the Q3(b) playbook, then deploys that same tag to both hosts with the Q3(b) deploy playbook | `ansible-playbook build-docker.yaml -e backend_repo=…/ict381_backend -e mongo_repo=…/ict381_mongo -e image_tag=${RELEASE_TAG}`, then `ansible-playbook prod-application.yaml -e image_tag=${RELEASE_TAG} -e mongo_image_tag=${RELEASE_TAG}` |
+| `main`-only guards (lines 55, 66, 83) | Run the three deploy stages only on the `main` build | `when { branch 'main' }` on Tag release, Deploy frontend to S3 and Deploy backend to app host |
 
 ### (b) The frontend API base
 
-`REACT_APP_API_URL` change applied across five files:
+**Adapted for SkipQ.** The five StaycationX files (`form.js`, `show.js`, `manage.js`, `explore.js`, `book.js`) do not exist in my TMA frontend. Every SkipQ page sends its requests through `src/api/endpoints.js`, which calls one module, [`frontend/src/api/client.js`](frontend/src/api/client.js). That module already reads the API base from the build-time variable (line 3):
 
-- [ ] `frontend/src/Components/Form/form.js`
-- [ ] `frontend/src/Pages/show.js`
-- [ ] `frontend/src/Pages/manage.js`
-- [ ] `frontend/src/Pages/explore.js`
-- [ ] `frontend/src/Pages/book.js`
+```javascript
+const BASE_URL = process.env.REACT_APP_API_URL || 'http://127.0.0.1:5000';
+```
+
+So the change the paper asks for — replace the `window.location.hostname` base with `process.env.REACT_APP_API_URL` — is already in place, in one file instead of five, and needed no edit.
 
 ### (b) Local development still works
 
-**Screenshot:** `TODO — evidence/q4b-local-dev-network.png`
+**Screenshot:** [`evidence/q4b-local-dev-network.png`](evidence/q4b-local-dev-network.png)
 
-Shows `npm start` on :3000 loading data from the local `docker compose` backend on `localhost:5000`.
+![npm start on :3000 calling the local backend on 127.0.0.1:5000](evidence/q4b-local-dev-network.png)
+
+`npm start` on `localhost:3000` signing in through `POST http://127.0.0.1:5000/api/user/gettoken` (`200 OK`), then loading `stalls`, from the local `docker compose` backend. The backend's CORS response (`Access-Control-Allow-Origin: http://localhost:3000`) allows the cross-origin call. My backend had no compose file, so I added [`backend/docker-compose.yml`](backend/docker-compose.yml): the API built from `backend/Dockerfile` and published on `5000`, plus the seeded MongoDB from `DockerfileMongo`.
 
 ### (b) Write-up 1 — The local-development fix
 
 > The replacement line works for the deployed build but breaks local development. Modify the change so local dev still works while still using the injected value for the deployed build, and explain the approach.
 
-`TODO — state the approach and why it works for both cases.`
+**Approach: an injected value with a local fallback.** `client.js` uses `process.env.REACT_APP_API_URL || 'http://127.0.0.1:5000'`.
+
+- **Deployed build.** The pipeline's `Deploy frontend to S3` stage runs `npm run build` with `-e REACT_APP_API_URL=http://${APP_PUBLIC_DNS}:5000`. `react-scripts` replaces `process.env.REACT_APP_API_URL` with that string when it builds the bundle, so the site served from S3 calls the application host.
+- **Local development.** `npm start` runs without the variable, so the expression is `undefined || 'http://127.0.0.1:5000'` and the dev server on `:3000` calls the backend that `docker compose up` publishes on `:5000`.
+
+The bare replacement line breaks local development because, with nothing injected, the URL becomes `undefined` and every request fails. The fallback keeps one code path for both cases with no branching on environment, and a developer can still point at another backend by setting the variable in `frontend/.env` (the template is in `frontend/.env.example`). Because every page uses `client.js`, the rule lives in one place.
 
 ### (b) Write-up 2 — The frontend build command explained
 
@@ -468,17 +488,24 @@ docker run --rm -e REACT_APP_API_URL=http://${APP_PUBLIC_DNS}:5000 \
 
 | Part | What it does | Why |
 |---|---|---|
-| `docker run --rm` | `TODO` | `TODO` |
-| `-e REACT_APP_API_URL=…` | `TODO` | `TODO` |
-| `-v "$PWD:/app"` | `TODO` | `TODO` |
-| `-w /app` | `TODO` | `TODO` |
-| `node:16.20.2-alpine` | `TODO` | `TODO` |
-| `npm ci` | `TODO` | `TODO` |
-| `npm run build` | `TODO` | `TODO` |
+| `docker run --rm` | Runs the build in a new container and deletes the container when it exits | The CI host has no Node installed (Q3(a) installs Docker, Ansible, the AWS CLI and Jenkins, but not Node), and a throwaway container leaves nothing behind between builds |
+| `-e REACT_APP_API_URL=…` | Sets the API base inside the container to the application host's public DNS on port 5000 | `react-scripts` bakes `REACT_APP_*` variables into the JavaScript at build time; a static site on S3 has no server to read them at run time, so the value must be set here. `APP_PUBLIC_DNS` is the Elastic IP's DNS from Q2, so it stays valid across restarts |
+| `-v "$PWD:/app"` | Mounts the Jenkins workspace's `frontend/` folder into the container at `/app` | The build writes `build/` back to the host, where the next step (`aws s3 sync build/ …`) uploads it with the CI host's instance profile |
+| `-w /app` | Starts the command in `/app` | That is where `package.json` and `package-lock.json` are, so `npm` finds the project |
+| `node:16.20.2-alpine` | A pinned Node 16 image | The same image as the frontend test stage, so the code is built with exactly the Node it was tested on. My lock file was regenerated under this Node (Q4a) so `npm ci` succeeds here; `alpine` keeps the image small |
+| `npm ci` | Clean-installs exactly the versions in `package-lock.json` | Every build gets the same dependency tree, and the step fails instead of silently drifting if `package.json` and the lock file disagree |
+| `npm run build` | Runs `react-scripts build`, producing an optimised static site in `build/` | This is the folder the S3 sync publishes, with the API base already inlined |
 
 ### (b) Write-up 3 — Why the `main`-only guard is on the deploy stages only
 
-`TODO — why Checkout and the two test stages are deliberately unguarded.`
+`Checkout`, `Frontend tests` and `Backend tests` are deliberately unguarded because they are the gate, and the gate has to run on every branch. A push to `feat/q4-cicd` must check out the code and run both suites so Jenkins can post the ✓/✗ check on the pull request — that check is what tells me whether the PR may be merged. Guarding the tests would mean feature branches reported nothing, and untested code could reach `main`.
+
+The three deploy stages change shared, live state, so they must run only for the reviewed, merged code on `main`:
+
+- **Tag release** writes a permanent tag to GitHub. A Multibranch job numbers builds separately per branch, so without the guard a feature branch's build #1 and `main`'s build #1 would both try to push `v1`, and a release tag could point at unmerged work.
+- **Deploy frontend to S3** overwrites the public site (`--delete` even removes files), and **Deploy backend to app host** replaces the containers users are hitting. Running either from a feature branch would ship work-in-progress code to production before review.
+
+With the guards, a feature-branch build runs the gate and stops; only a green `main` build tags and deploys.
 
 ## Question 4c — Activate and run the pipeline
 
