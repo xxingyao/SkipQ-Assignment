@@ -746,29 +746,31 @@ References: [`docker compose up` — volumes are preserved when a container is r
 
 > At least three distinct points. Each must be grounded in concrete cross-repository coordination friction encountered in the TMA (where frontend and backend were separate repos) and linked to a specific artifact from Questions 2–5 that demonstrates how a single repository removed that friction. Make the causal relationship clear.
 
-### Point 1 — `TODO: title`
+In the TMA, SkipQ lived in two repositories: `ict381-2026-t02-tma-backend-xxingyao` and `ict381-2026-t02-tma-frontend-xxingyao`. The commit hashes and quotes below come from their histories, mirrored at `xxingyao/skipq-backend-mirror` and `xxingyao/skipq-frontend-mirror`.
+
+### Point 1 — One feature is one commit, not a push to each repository
 
 | | |
 |---|---|
-| **TMA friction** | `TODO — the concrete coordination problem encountered` |
-| **Artifact from Q2–5** | `TODO — the specific file, log or output` |
-| **Why the restructuring eliminates it** | `TODO — the causal explanation` |
+| **TMA friction** | Every user-facing feature needed a commit in **both** repositories, pushed separately:<br>• *Dismissing notifications*: backend `7f51b64` "Mark notifications read, so the diner's banner clears" (adds `POST /api/diner/notifications/read`) and frontend `6b9a8f4` "Add Dismiss to the notification banner" (adds `dismissNotifications` to `src/api/endpoints.js`). Both were pushed at **2026-10-19 15:38**.<br>• *Menu editing and order tracking*: backend `978b792` (01:23) and frontend `875f0fb` (01:24).<br><br>The second pair shows the cost. `978b792` also had to change the backend's role guard so that `OPTIONS` requests are exempt, because the new frontend screens' cross-origin preflight requests were being refused. A change in one repo broke against the other, and it could only be found by running both by hand. The two halves were reviewed separately, and nothing stopped one being pushed without the other. |
+| **Artifact from Q2–5** | **Pull request #3**, merged as `337784e` ([`evidence/q4c-gate-merge.png`](evidence/q4c-gate-merge.png)). One PR carried 11 files across both tiers and the pipeline: `Jenkinsfile`, `backend/test-compose.yml`, `backend/docker-compose.yml`, `frontend/package.json`, `frontend/package-lock.json`, `frontend/src/Pages/SignIn.js`, `frontend/src/domain/orderActions.test.js`, plus the README and evidence. It was reviewed as one diff, gated by one check (`continuous-integration/jenkins/pr-head`), and merged as one commit. |
+| **Why the restructuring eliminates it** | The unit of change is now a **commit, and a commit is atomic across directories**. `7f51b64` + `6b9a8f4` would be one commit: the reviewer sees the endpoint and its caller in the same diff, the gate tests them together, and the merge lands both or neither. The repository can never hold the frontend half of a feature without the backend half, so there's no second push to forget and no order to get wrong. |
 
-### Point 2 — `TODO: title`
-
-| | |
-|---|---|
-| **TMA friction** | `TODO` |
-| **Artifact from Q2–5** | `TODO` |
-| **Why the restructuring eliminates it** | `TODO` |
-
-### Point 3 — `TODO: title`
+### Point 2 — One version identifies the whole system
 
 | | |
 |---|---|
-| **TMA friction** | `TODO` |
-| **Artifact from Q2–5** | `TODO` |
-| **Why the restructuring eliminates it** | `TODO` |
+| **TMA friction** | Each repository had its own history, and nothing recorded which frontend commit needed which backend commit. The dependencies were real but invisible:<br>• Frontend `6b9a8f4`'s Dismiss button calls `POST /api/diner/notifications/read`, which exists only from backend `7f51b64` onward. Pair it with an earlier backend and Dismiss gets a 404.<br>• Frontend `1bdc872` "Render the order timestamp in the viewer's local time" parses `created_at + 'Z'`, so it depends on the backend sending naive UTC. That contract lived in neither repo's version history.<br><br>The READMEs only point at each other (*"the React client lives in the frontend repository"*; *"The SkipQ backend running, with its database seeded"*), with no version. Even a cross-repo link drifted: backend `aeda1f0` added the Q7a screencast at 22:09, frontend `110f4f4` linked it at 22:29, and the link had to be fixed again in `b93f808` "Update screencast link in README" at 23:37. |
+| **Artifact from Q2–5** | **Release tag `v3`** on merge commit `337784e` ([`evidence/q4c-github-tags.png`](evidence/q4c-github-tags.png)), produced by `RELEASE_TAG = "v${BUILD_NUMBER}"` (`Jenkinsfile` line 24). In one `main` build the same value tags the Git commit (line 60), tags the images `ict381_backend:v3` and `ict381_mongo:v3` (line 88), and is deployed to both hosts (line 92). The S3 site is built from the same checkout (line 73). Q5(b) relies on exactly this to roll both tiers back together. |
+| **Why the restructuring eliminates it** | In one repository, **a single commit SHA fixes the frontend and the backend at once**. The dependency between the Dismiss button and its endpoint is no longer a fact someone has to remember: both sit in every commit from the one that added them. A tag on a commit therefore can't point at mismatched halves, so `v3` is one compatible pair by construction. A rollback (Q5(a)–(b)) chooses one tag instead of reconciling two histories. |
+
+### Point 3 — The two tiers are tested together, from the same commit
+
+| | |
+|---|---|
+| **TMA friction** | There was no place where the frontend and backend were tested as a pair:<br>• The only cross-tier test, `tests/playwright/test_order_lifecycle.py` (backend `db17d1c`), lives in the **backend** repo but drives the **frontend**. The TMA backend README says it *"Needs the backend on :5000, the frontend on :3000 and a freshly seeded database"*. `pytest.ini` deselects it by default, so it ran only when both repos were checked out and started by hand, against whatever frontend commit happened to be on disk.<br>• The frontend repo had no tests of its own at all: `26667b8` removed the lab's `src/App.test.js` and `setupTests.js`, and `774f5fa` dropped the testing libraries.<br>• Each repo also carried its own Docker and compose scaffolding (backend `Dockerfile`, `docker-compose.yml`; frontend `DockerfileReact`, `compose.yaml`).<br><br>The lab's provided `Jenkinsfile` (as imported in `f5743d6`) shows how a pipeline copes with this: three separate `git branch: 'main'` clones. That tests whatever each `main` happened to be at that moment and records nothing about which combination passed. |
+| **Artifact from Q2–5** | **The Q4 `Jenkinsfile`**: one `checkout scm` (line 30), then **Frontend tests** (line 33) and **Backend tests** (line 40) on that one commit. Q4a restored a frontend suite (`frontend/src/domain/orderActions.test.js`, with `@testing-library/*` back in `frontend/package.json`) so both tiers are gated. Both suites ran on PR #3's `ebb99d6` (red, [`q4c-gate-red.png`](evidence/q4c-gate-red.png)) and `ab9ee71` (green, [`q4c-gate-green.png`](evidence/q4c-gate-green.png)), then again on `main #3` before deploy ([`q4c-gate-deploy.png`](evidence/q4c-gate-deploy.png)). See also Q1's before/after table (3 × `git` clone → `checkout scm`). |
+| **Why the restructuring eliminates it** | The commit under test fixes the version of both sides. "Which frontend should this backend be tested against?" now has exactly one answer: the one in the same commit. A green check means *this* frontend and *this* backend passed together, and that is exactly the pair that gets tagged and deployed (Q4d(b)). It also makes the Playwright lifecycle test runnable in one job, which is the natural next stage for the gate (Q5(e)). |
 
 ---
 
