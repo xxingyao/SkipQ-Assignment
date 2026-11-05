@@ -626,32 +626,117 @@ Change-scoped testing makes sense where each directory deploys independently and
 
 | Artifact | Exact value | Defined in |
 |---|---|---|
-| Release tag format | `TODO` | `TODO` |
-| Backend ECR repository | `TODO` | `TODO` |
-| MongoDB ECR repository | `TODO` | `TODO` |
-| Site S3 bucket | `TODO` | `TODO` |
-| Deploy playbook | `infra/ansible/prod-application.yaml` | `TODO` |
-| Image tag parameters | `-e image_tag=` / `-e mongo_image_tag=` | `TODO` |
+| Release tag format | `RELEASE_TAG = "v${BUILD_NUMBER}"`, e.g. `v3` on merge commit `337784e` | `Jenkinsfile` line 24; pushed by `git tag ${RELEASE_TAG} && git push origin ${RELEASE_TAG}` (line 60) |
+| Backend ECR repository | `203635632743.dkr.ecr.us-east-1.amazonaws.com/ict381_backend` (`image_tag_mutability = "MUTABLE"`) | `infra/terraform/main.tf` lines 263–267 (`aws_ecr_repository.backend`); output `backend_ecr_url` (`infra/terraform/output.tf` line 25); `infra/ansible/inventory.ini` line 30 |
+| MongoDB ECR repository | `203635632743.dkr.ecr.us-east-1.amazonaws.com/ict381_mongo` (`MUTABLE`) | `infra/terraform/main.tf` lines 269–273 (`aws_ecr_repository.mongo`); output `mongo_ecr_url` (`output.tf` line 29); `inventory.ini` line 31 |
+| Site S3 bucket | `ict381-eca-site-xxingyao-203635632743`, served at `http://ict381-eca-site-xxingyao-203635632743.s3-website-us-east-1.amazonaws.com` (no versioning configured) | `infra/terraform/main.tf` lines 221–222 (`awscc_s3_bucket.site`); `Jenkinsfile` line 19 (`SITE_BUCKET`) |
+| Deploy playbook | `infra/ansible/prod-application.yaml` | Plays *Deploy MongoDB to the database host* (lines 86–113, `hosts: db`) and *Deploy the backend to the application host* (lines 118–146, `hosts: app`); run by `Jenkinsfile` line 92 |
+| Image tag parameters | `-e image_tag=` / `-e mongo_image_tag=` | Defaults `image_tag: latest` (`prod-application.yaml` line 127) and `mongo_image_tag: latest` (line 95). Consumed as `{{ backend_ecr_repo }}:{{ image_tag }}` (`templates/backend-compose.yml.j2` line 15) and `{{ mongo_ecr_repo }}:{{ mongo_image_tag }}` (`templates/mongo-compose.yml.j2` line 10). Build side: `image_tag` in `build-docker.yaml` line 33 |
+
+Throughout, **vN** is the bad release and **vK** is the last stable one. Today `v3` is the only pipeline release. The stable version before it is the Q3b seed, tagged `latest` in both ECR repositories (`evidence/q3b-ecr-images.log`).
 
 ### (a) Returning each tier to a previous stable version
 
-`TODO — for both frontend and backend: what you check out, rebuild or redeploy, and which Q1–4 artifacts you rely on. Identify where a tier can be restored WITHOUT rebuilding, and explain why that is possible.`
+**Backend (and MongoDB): redeploy, no rebuild.** Every `main` build ran `build-docker.yaml -e image_tag=${RELEASE_TAG}` (`Jenkinsfile` line 88), which pushed `ict381_backend:vK` and `ict381_mongo:vK` to ECR. Those images are still there. Terraform never expires them: there is no lifecycle policy in `main.tf`, and `force_delete` only matters on destroy. So rolling back the backend is one command from the CI host, in `infra/ansible`, using the same playbook and inventory as every release:
+
+```
+ansible-playbook prod-application.yaml -e image_tag=vK -e mongo_image_tag=vN   # database tag left as it is — see (c)
+```
+
+The first play logs the hosts in to ECR through `LabInstanceProfile` (`prod-application.yaml` lines 77–81). The backend play re-renders `/opt/backend/compose.yml` with `image: …/ict381_backend:vK`. `docker_compose_v2` with `state: present` (lines 143–146) sees a changed image, pulls it and recreates only the `backend` container. Nothing is compiled, no tests run, and `pip install` doesn't run. That's why this tier can be restored **without rebuilding**: the release *is* an immutable-by-convention image in a registry, and deploying is just choosing which tag to point the compose file at.
+
+**Frontend: check out the tag, rebuild, re-sync.** The frontend has no stored release artifact. `aws s3 sync build/ s3://${SITE_BUCKET} --delete` (`Jenkinsfile` line 77) *overwrites* the bucket, and `awscc_s3_bucket.site` has no versioning. So the only copy of the vK site is its source, at git tag `vK`. To restore it, on the CI host:
+1. `git checkout vK` in the monorepo.
+2. In `frontend/`, rerun the provided build: `docker run --rm -e REACT_APP_API_URL=http://ec2-3-214-100-242.compute-1.amazonaws.com:5000 -v "$PWD:/app" -w /app node:16.20.2-alpine sh -c "npm ci && npm run build"` (`Jenkinsfile` lines 72–73).
+3. `aws s3 sync build/ s3://ict381-eca-site-xxingyao-203635632743 --delete --region us-east-1`.
+
+The rebuild is reproducible because `package-lock.json` (regenerated under Node 16 in Q4a) fixes every dependency, `npm ci` installs exactly the lock, and the builder image is pinned to `node:16.20.2-alpine`. It takes minutes, mostly `npm ci` (about 4 minutes in `main #2`), where the backend takes seconds.
+
+**Making it permanent.** After the hot rollback, `main` still holds the bad code, so the next merge would re-ship it. The durable fix goes through the gate: a revert PR of the bad merge (e.g. `git revert -m 1 <merge>`), which turns green and is merged, and then `main` tags and deploys a new `v(N+1)` whose content equals vK.
 
 ### (b) Keeping the two tiers consistent
 
-`TODO — how you ensure frontend and backend return to the same release together. What property of the way they were built and released guarantees this?`
+**One release number names both tiers.** In a single `main` build, the same `RELEASE_TAG` (`Jenkinsfile` line 24):
+- tags the commit in Git (line 60),
+- tags the backend and MongoDB images (`-e image_tag=${RELEASE_TAG}`, line 88),
+- is deployed to both hosts (`-e image_tag=${RELEASE_TAG} -e mongo_image_tag=${RELEASE_TAG}`, line 92),
+- and the S3 bundle is built from the same checked-out commit (line 73).
+
+Because Q1 put both tiers in one repository, git tag `v3` → commit `337784e` contains the exact `frontend/` and `backend/` that produced `ict381_backend:v3` and the `v3` site, and both passed the gate together on that commit. "Version vK" is therefore one consistent pair, not two numbers someone has to match up. Rolling back means choosing **one** `vK` and using it for both application tiers: `git checkout vK` for the frontend rebuild and `-e image_tag=vK` for the backend. There's no compatibility table to consult, because the tag is the compatibility record. The database is the deliberate exception: its tag is left alone during a code rollback, for the reasons in (c).
+
+**The API address never changes between releases.** The frontend bakes in `REACT_APP_API_URL=http://${APP_PUBLIC_DNS}:5000` at build time. `APP_PUBLIC_DNS = 'ec2-3-214-100-242.compute-1.amazonaws.com'` (`Jenkinsfile` line 20) comes from `aws_eip.app_eip` (`main.tf` line 211). Because the Elastic IP is fixed, an old bundle rebuilt from `vK` still calls the same host. So a rolled-back frontend reaches the rolled-back backend with no config change.
+
+**Order of the rollback.** Backend first (seconds), then frontend. Users meet an old frontend on a new backend only during the short window in between, never the other way round for long.
 
 ### (c) Database deployment handling
 
-`TODO — issues with redeploying the database on every release, plus an improvement, grounded in how DockerfileMongo / db_seed_restore.sh seed and prod-application.yaml actually behave.`
+**How it actually behaves.**
+- Every release, `build-docker.yaml` (line 63) builds and pushes a new `ict381_mongo:vN`. Each one has the seed baked in: `DockerfileMongo` runs `COPY db_seed /opt` and installs `db_seed_restore.sh` as `/docker-entrypoint-initdb.d/restore.sh`. That script runs `mongorestore --drop /opt` (`db_seed_restore.sh` line 8).
+- `prod-application.yaml` then renders `image: …/ict381_mongo:vN` (`mongo-compose.yml.j2` line 10). Because the tag changes on every release (`-e mongo_image_tag=${RELEASE_TAG}`, `Jenkinsfile` line 92), `docker_compose_v2` (lines 110–113) **stops and recreates the database container on every release**, including frontend-only ones.
+- `mongo-compose.yml.j2` declares **no volume**. The data survives a recreate only by accident: the official `mongo` image declares `VOLUME /data/db`, so Docker creates an *anonymous* volume, and Compose carries it over to the replacement container ("preserving mounted volumes"). The official image runs `/docker-entrypoint-initdb.d/` **only when `/data/db` is empty**. So the seed is restored on the very first deploy and never again.
+
+**The issues.**
+1. **The release's database image doesn't contain what it claims.** After the first deploy, the seed inside `ict381_mongo:vN` is never applied. A change to `backend/db_seed/skipq/` in a release silently never reaches production. Likewise, rolling back with `-e mongo_image_tag=vK` changes the engine binary but **not one document**, so "database rollback" only looks like one.
+2. **Production data is one command away from being reset to the seed.** The live data sits in an unnamed, un-backed-up anonymous volume. Any of these empties `/data/db`, after which the init script runs `mongorestore --drop` and every order, payment and new user (`foodOrders`, `payments`, `appUsers`) is replaced by the snapshot:
+   - `docker compose down -v` in `/opt/mongo`;
+   - `docker system prune --volumes`;
+   - an `up` with `--renew-anon-volumes`;
+   - replacing `aws_instance.db`.
+3. **The engine version is unpinned, and rollback goes downward.** `DockerfileMongo` is `FROM mongo`, i.e. `latest`, so any release can move production to a new MongoDB major version on top of the existing data files. Rolling back to an older `ict381_mongo:vK` then runs an *older* engine against data written by a newer one. MongoDB requires `featureCompatibilityVersion` to be lowered before a downgrade, so the database container can fail to start, and the "rollback" takes the site down.
+4. **Every release causes database downtime.** The backend loses its database while the container is replaced, even when nothing about the database changed.
+5. Minor: the comments in `DockerfileMongo` and `db_seed_restore.sh` still say `staycation`, while the restore actually loads `skipq`.
+
+**The improvement: separate the data's lifecycle from the code's.**
+- **Make persistence explicit:** in `mongo-compose.yml.j2`, add `volumes: [mongo-data:/data/db]` with a top-level `volumes: {mongo-data: {}}`. The data then survives any container change by design. The seed stays as a first-boot-only initialiser, which is what the init script is meant for.
+- **Deploy the database only when it changes:** stop passing `mongo_image_tag=${RELEASE_TAG}` on every build (`Jenkinsfile` line 92). Pin the engine (`FROM mongo:<major>`) and bump `mongo_image_tag` only on a deliberate database change, so a normal release or rollback never touches the database container.
+- **Changes to data go through migrations, not the seed:** ship schema or data changes as idempotent, backward-compatible migration steps run by the backend release. Then backend `vK` can still run against data that `vN` has touched.
+- **Back up before every deploy:** add a task before *Bring MongoDB up* that runs `mongodump` to S3 through the host's `LabInstanceProfile`. Then a bad release that damages data has a restore point.
+
+With these changes, a code rollback is `-e image_tag=vK` alone, and the database is never touched by one.
 
 ### (d) Why the infrastructure stays untouched
 
-`TODO — what separates "what runs" from "what it runs on", and why that separation makes rollback a fast redeploy rather than a rebuild.`
+**What it runs on** is declared once in Terraform and stored in the S3 remote state (`ict381-eca-tfstate-…`, `use_lockfile = true`):
+- `aws_instance.jenkins`, `aws_instance.app` and `aws_instance.db` (`main.tf` lines 152, 169, 186);
+- the per-tier security groups `ci_sg`, `application_sg` and `database_sg`;
+- `aws_eip.jenkins_eip` and `aws_eip.app_eip`;
+- `awscc_s3_bucket.site`;
+- the two `aws_ecr_repository` resources.
+
+None of these resources mentions a release: `main.tf` contains no image tag, no S3 object and no application version.
+
+**What runs** is entirely outside Terraform:
+- the image tags in ECR,
+- the objects in the S3 bucket,
+- and the `/opt/backend/compose.yml` and `/opt/mongo/compose.yml` files that Ansible renders from two variables, `image_tag` and `mongo_image_tag`.
+
+The hosts are addressed through fixed values: `inventory.ini` (`ip-172-31-42-96.ec2.internal`, `172.31.40.21`), the EIP DNS in `Jenkinsfile` line 20, and the `extra_hosts` entry `db:<db private IP>` in `backend-compose.yml.j2` line 19. So the network, the ports (`5000` and `27017`, opened by the security groups) and the IAM access (`LabInstanceProfile`, which lets the hosts pull from ECR without keys) all stay valid for any release.
+
+A rollback therefore changes one value in the "what runs" layer. `terraform plan` before and after would show **no changes**, so there is nothing to re-provision. The hosts are already bootstrapped (Docker, the AWS CLI and the compose plugin are installed by the first play, and Q3c showed it is idempotent), and the images are already built. What remains is a `docker pull` and a container restart for the backend, plus an S3 sync for the frontend. A rebuild would instead mean `terraform apply` for new instances and new IPs, then the Q3a bootstrap, then a new build. It would also change `APP_PUBLIC_DNS`, which would break every frontend bundle that has the old address baked in.
 
 ### (e) Detecting it sooner, recovering faster
 
-`TODO — how you would notice the failure faster, shorten recovery, or prevent recurrence.`
+**Notice sooner.** Add a **post-deploy smoke-test stage** to the `Jenkinsfile` after *Deploy backend to app host*. It would automatically do what `evidence/q4c-live-site-login.png` shows by hand:
+- `curl` the S3 website and check for the `Log In` heading;
+- `POST http://${APP_PUBLIC_DNS}:5000/api/user/gettoken` with the seed user `weiling@skipq.test` and expect `200`;
+- `GET /api/diner/stalls` (with the returned token) and expect the three seeded stalls.
+
+If it fails, the build turns red within seconds of the release. Today a broken release is noticed only when a user complains. A `healthcheck:` in `backend-compose.yml.j2` would also make `docker ps` on the app host show an unhealthy container straight away.
+
+**Catch slow-query and behaviour regressions before they ship.** The repo already contains suites the gate doesn't run: `backend/tests/playwright/test_order_lifecycle.py` (end-to-end ordering through the UI) and `backend/tests/stress/locustfile.py` (load). The paper names slow queries as a typical post-deploy failure, and a short Locust run against the `test-compose.yml` stack with a latency threshold would catch exactly that in the gate.
+
+**Recover faster.**
+- **Keep every frontend release.** Sync each build to `s3://${SITE_BUCKET}/releases/${RELEASE_TAG}/` as well, or enable versioning on `awscc_s3_bucket.site`. A frontend rollback then becomes a copy instead of a 4-minute rebuild.
+- **A parameterised `rollback` job.** It takes `ROLLBACK_TAG` and runs only `prod-application.yaml -e image_tag=${ROLLBACK_TAG}` plus the S3 restore, with no build and no tests. One click, well under a minute.
+- **Automatic rollback.** If the smoke test fails, redeploy the previous tag found with `git describe --tags --abbrev=0 ${RELEASE_TAG}^`.
+
+**Prevent recurrence.**
+- Set `image_tag_mutability = "IMMUTABLE"` on both ECR repositories (`main.tf` lines 265 and 271). A rebuilt or recreated Jenkins job that restarts `BUILD_NUMBER` at 1 could otherwise overwrite `ict381_backend:v3` and quietly change what "rolling back to v3" means.
+- Pin `FROM mongo` and the backend base image.
+- Apply the database changes from (c), so a release never takes user data with it.
+- Make the date-dependent backend test deterministic (Q4a(3)), so a red gate always means a real defect.
+
+References: [`docker compose up` — volumes are preserved when a container is recreated; `--renew-anon-volumes`](https://docs.docker.com/reference/cli/docker/compose/up/) · [Official `mongo` image — `/docker-entrypoint-initdb.d` runs only on an empty data directory](https://hub.docker.com/_/mongo) · [MongoDB — downgrade requires lowering `featureCompatibilityVersion` first](https://www.mongodb.com/docs/manual/reference/command/setFeatureCompatibilityVersion/)
 
 ---
 
