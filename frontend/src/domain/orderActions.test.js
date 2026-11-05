@@ -23,8 +23,8 @@ describe('actionsFor', () => {
     expect(actionsFor(fresh).map((a) => a.label)).not.toContain('No-show');
   });
 
-  // Deliberately failing (Q4a): the label is 'Refund'. Fixed in Q4c to show red -> green.
+  // Was deliberately failing in Q4a; fixed in Q4c (red -> green).
   test('a rejected order can be refunded', () => {
-    expect(actionsFor({ status: 'Rejected' })[0].label).toBe('Refunded');
+    expect(actionsFor({ status: 'Rejected' })[0].label).toBe('Refund');
   });
 });

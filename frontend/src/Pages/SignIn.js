@@ -19,7 +19,7 @@ export function SignIn() {
 
   return (
     <div className="container" style={{ maxWidth: 420, marginTop: '4rem' }}>
-      <h1 className="h3">SkipQ</h1>
+      <h1 className="h3">Log In</h1>
       <p className="text-muted">Sign in as a diner or a stall owner.</p>
       <Notice error={error} />
       <form onSubmit={handleSubmit}>
