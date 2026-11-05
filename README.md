@@ -584,13 +584,35 @@ References: [Jenkins Security Advisory 2024-01-24 (CVE-2024-23897)](https://www.
 
 > A teammate argues the gate is wasteful: when a PR touches only `/frontend`, run the React suite alone; when it touches only `/backend`, run the backend suite alone. Counter this.
 
-`TODO — give the context and the reasons for running both suites, grounded in this build.`
+**Context.** SkipQ is one product kept in two directories, and it is released as one unit. Every green `main` build creates **one** tag (`RELEASE_TAG = "v${BUILD_NUMBER}"`, e.g. `v3`) and runs **both** deploy stages, whichever directory the pull request touched:
+- `aws s3 sync build/ s3://${SITE_BUCKET} --delete` publishes the frontend;
+- `build-docker.yaml -e image_tag=${RELEASE_TAG}` followed by `prod-application.yaml -e image_tag=${RELEASE_TAG} -e mongo_image_tag=${RELEASE_TAG}` rebuilds and redeploys the backend and MongoDB.
+
+So the gate does not certify a diff. It certifies the release that is about to ship, and that release always contains both tiers.
+
+**Why both suites run on every change:**
+
+1. **A "frontend-only" PR still ships a freshly built backend.** The Deploy backend stage rebuilds the backend and MongoDB images for every tag. Their bases are not frozen: `backend/DockerfileMongo` is `FROM mongo` (i.e. `latest`), `backend/Dockerfile` is `FROM python:3.12-slim`, and the test service in `backend/test-compose.yml` is `python:3.12`. If PR #3 had touched only `/frontend`, `v3` would still have carried a MongoDB image pulled that day. The backend suite (`tests/unit` and `tests/functional`, run against the seeded `DockerfileMongo` database) is the only check on that image before it reaches the database host. Skipping it would put an untested backend under a release tag that claims to be tested.
+2. **The two suites guard two halves of one rule.** `frontend/src/domain/orderActions.js` says *"The backend owns the rule; this mirrors only the question of what to show"*. It hard-codes the backend's status names (`PendingAcceptance`, `Rejected` → `Refunded`, `NoShow`), `NO_SHOW_AFTER_MINUTES = 30`, and the naive-UTC `status_updated_at` format. The backend half is pinned by `backend/tests/unit/test_order_rules.py` (`test_the_table_permits_every_move_it_declares`, `test_no_show_is_refused_inside_the_window`, …), and the frontend half by `orderActions.test.js`. A "backend-only" change to the order table is really a change to both tiers. Running both suites on the same commit re-asserts both halves together, instead of checking one side against an old build of the other.
+3. **In this repo, path filters would miss the changes that matter most.** Many changes live in neither directory: `Jenkinsfile`, `infra/ansible/*.yaml`, `infra/terraform/`. PR #3 itself touched `Jenkinsfile`, `backend/`, `frontend/` and `README.md`. A path filter would either run nothing for a `Jenkinsfile` or Ansible change (exactly the changes that alter how the build tests and deploys) or need a hand-maintained list that can drift.
+4. **The saving is small and the risk is not.** `main #3` ran both suites, tagged and deployed in **4 min 35 s**, and most of the frontend time is `npm ci`. A bad release, by contrast, means rolling back the S3 site, the ECR images and the app host.
+
+Change-scoped testing makes sense where each directory deploys independently and a build graph (Nx, Bazel) knows the dependencies. Here every release deploys both tiers. Scoping the *tests* while the *deploy* stays whole is exactly the mismatch the teammate's proposal would create.
 
 ### (d)(b) Against testing once
 
 > The gate runs the whole suite on every feature-branch push, then again on the `main` build before the deploy stages. Explain why the second run is not redundant.
 
-`TODO`
+1. **The PR build does not test the commit that is released.** In the job configuration, *Discover pull requests from origin* uses **"The current pull request revision"**. Jenkins builds the PR **head** (`ab9ee71`) and reports it as `continuous-integration/jenkins/pr-head`. The commit that was tagged `v3` and deployed is the **merge commit `337784e`**, which no build had seen until `main` built it. If `main` moves after a branch is cut, two pull requests that are each green can combine into a red `main`. For example, one renames a status in `backend/app/models/order.py` while the other adds a frontend action for the old name in `orderActions.js`. Only the `main` run tests the merged tree.
+2. **It tests the exact inputs the release is built from, at the moment it is built.** The `main` build checks out `337784e`, runs the gate, then tags that commit and builds the S3 bundle and the `v3` images from it. Between the PR run and the merge, the inputs outside Git can change:
+   - `FROM mongo` resolves to whatever `latest` is that day;
+   - `npm ci` downloads from the registry again;
+   - the clock moves on. The backend dashboard test counts today's UTC orders and fails between 00:00 and 05:00 UTC (see Q4a(3)).
+
+   A green check from earlier is evidence about a different moment.
+3. **It is the last guard right before the irreversible steps.** **Tag release** pushes a permanent tag. **Deploy frontend to S3** overwrites the live site with `--delete`. **Deploy backend to app host** replaces the running containers. `main #2` shows this guard at work. It was the first build of merge commit `337784e`, and it failed at **Backend tests** (`Conflict. The container name "/backend-db-1" is already in use`, caused by a `feat/q4-cicd` build running at the same moment). Tag release and both Deploy stages were skipped, so no `v2` tag exists and production stayed on the previous release. The earlier feature-branch run was already green and could not have stopped that.
+
+**What this taught me about the gate.** Concurrent builds on the CI host share the Compose project name `backend`, taken from the directory name, so they can break each other. Giving each run its own project would fix this, e.g. `docker compose -p "skipq-test-${EXECUTOR_NUMBER}" -f test-compose.yml …` in the Backend tests stage and its `post` step. Two builds on one node never share an executor number. With that change, the `main` re-run fails only for real reasons.
 
 ---
 
